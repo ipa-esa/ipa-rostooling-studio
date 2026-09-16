@@ -16,29 +16,96 @@ import time
 import uuid
 
 IMAGE = "ros:jazzy-ros-base"
-# Each entry is invoked as `<executable> "<prompt>"` in an interactive terminal (see
-# prepare_handoff) -- Codex and Claude Code both accept an initial prompt as their first
-# positional argument, and Gemini CLI (google-gemini/gemini-cli, binary `gemini`) uses the same
-# convention, so no per-provider argv is needed. Antigravity was requested too, but it ships as
-# an IDE, not a headless-prompt CLI in the confirmed sense the other three are -- wiring in a
-# guessed binary name here would silently do nothing (or the wrong thing) rather than fail
-# loudly, so it stays out until its actual CLI invocation is confirmed.
-AGENT_PROVIDERS = ("codex", "claude", "gemini")
+# Codex, Claude Code and Gemini CLI all accept an initial prompt as their first positional
+# argument for an INTERACTIVE session (see _interactive_argv / prepare_handoff), and codex/
+# claude/gemini all ship a documented non-interactive one-shot mode too (see _agent_exec_argv).
+# Antigravity CLI (binary `agy`, a separate product from the Antigravity IDE, GA since
+# 2026-05-19) is a genuine fourth option -- earlier revisions of this file left it out because
+# at the time "Antigravity" meant only the IDE, with no confirmed headless invocation to wire
+# in. Confirmed since, directly: `agy --help` (run on this machine) documents `-i`/
+# `--prompt-interactive` ("Run an initial prompt interactively and continue the session") for
+# the interactive case, and `-p`/`--print`/`--prompt` for the headless one-shot case -- see
+# HEADLESS_AGENT_PROVIDERS for why the latter is used with a caveat rather than blindly.
+AGENT_PROVIDERS = ("codex", "claude", "gemini", "antigravity")
+
+# Providers this file will run HEADLESSLY (submit_flag_resolution -> _agent_exec_argv): spawned
+# via subprocess.Popen with stdout captured (redirected to a file, exactly as production does
+# it) and parsed for a marker-delimited JSON result, never attached to a real terminal.
+#
+# Antigravity CLI is deliberately excluded here, for a reason confirmed by actually running it
+# headlessly against this exact use case (agy 1.2.4, tested 2026-09-16), not the one originally
+# suspected:
+#   - The suspected issue (github.com/google-antigravity/antigravity-cli#76: `agy -p`/`--print`
+#     silently dropping stdout under a non-TTY capture) did NOT reproduce -- tested with the
+#     production Popen pattern exactly (stdout redirected to a file, start_new_session=True),
+#     including a full run of the marker-delimited-JSON protocol below. Stdout came through
+#     intact both times.
+#   - What actually blocks it: headless `agy -p` auto-DENIES any tool call that needs a
+#     permission it cannot prompt for -- including a plain file read. Confirmed live: the exact
+#     prompt this function builds, run headlessly, produced "no output produced -- a tool
+#     required the 'read_file' permission that headless mode cannot prompt for, so it was
+#     auto-denied". Two per-invocation workarounds were tried, not just assumed unavailable:
+#       * --dangerously-skip-permissions (its own name for what it is) -- read the file
+#         correctly, but auto-approves everything else too, including writes and shell commands
+#         anywhere on the machine.
+#       * --add-dir <sourceRoot>, hoping for something narrower -- let the read through, but
+#         ALSO silently approved a write inside that same directory in a follow-up test (asked
+#         to create a file there; it did, no error, no denial). That breaks this function's own
+#         guarantee ("Modify no file anywhere") just as badly as the first option.
+#     Nothing found grants headless, read-only access scoped to one directory without also
+#     granting real write/exec access, short of a standing edit to agy's own settings.json on
+#     the machine (its error message mentions a `permissions.allow` rule there) -- which this
+#     file also won't do on its own, since that is a persistent change to software outside this
+#     app's control, not a per-request setting. So antigravity stays out of headless jobs
+#     specifically -- not because its invocation is unconfirmed (it now is, thoroughly), but
+#     because every per-invocation way found to make it work here grants more than this feature
+#     needs or promises. If it is invoked here anyway (e.g. via a future change), the failure
+#     mode is a job that ends in "failed" with no parseable result (see
+#     _execute_flag_resolution) -- visible and retryable with a different provider, not a false
+#     "passed" with fabricated content.
+HEADLESS_AGENT_PROVIDERS = ("codex", "claude", "gemini")
+
+# Only antigravity's provider name (as configured in settings/the UI) differs from its actual
+# binary on PATH -- "antigravity" reads clearly in settings; `agy` is the real executable.
+_PROVIDER_EXECUTABLE = {"antigravity": "agy"}
+
+
+def _provider_executable(provider):
+    return _PROVIDER_EXECUTABLE.get(provider, provider)
+
+
+def _interactive_argv(executable, provider, prompt):
+    """Interactive (terminal-attached) invocation for prepare_handoff -- opens a session a
+    person continues to drive, pre-seeded with the task. codex/claude/gemini all accept the
+    prompt as a bare positional argument for this. Antigravity CLI uses a distinct flag for a
+    seeded-interactive session, `-i`/`--prompt-interactive` ("Run an initial prompt
+    interactively and continue the session", confirmed via `agy --help` on this machine) -- its
+    `-p`/`--print` is a DIFFERENT, one-shot mode that exits immediately once it answers, which
+    is not what an interactive handoff needs."""
+    if provider == "antigravity":
+        return [executable, "-i", prompt]
+    return [executable, prompt]
 
 
 def _agent_exec_argv(executable, provider, prompt):
-    """Headless (non-interactive, no terminal) invocation for each supported coding-agent CLI --
-    distinct from prepare_handoff's `[executable, prompt]`, which launches an INTERACTIVE
-    terminal session for a person to drive. codex/claude both ship a documented non-interactive
-    mode (`codex exec`, `claude -p`); use it so a flag-resolution run can execute as a plain
-    background job with progress polled from the UI, with nobody babysitting a terminal."""
+    """Headless (non-interactive, no terminal) invocation for each HEADLESS_AGENT_PROVIDERS
+    entry -- distinct from _interactive_argv, which launches an INTERACTIVE terminal session
+    for a person to drive. codex/claude both ship a documented non-interactive mode (`codex
+    exec`, `claude -p`); use it so a flag-resolution run can execute as a plain background job
+    with progress polled from the UI, with nobody babysitting a terminal. Never called with a
+    provider outside HEADLESS_AGENT_PROVIDERS -- submit_flag_resolution gates on that set."""
     if provider == "codex":
         return [executable, "exec", prompt]
     if provider == "claude":
         return [executable, "-p", prompt]
     if provider == "gemini":
         return [executable, "-p", prompt]
-    return [executable, prompt]
+    # Every HEADLESS_AGENT_PROVIDERS entry has an explicit branch above -- this should be
+    # unreachable. Raise rather than guess a bare-positional invocation: several CLIs (agy
+    # included) treat a bare prompt as either an unrecognised argument or an invitation to open
+    # an interactive session, and the caller here has no terminal attached and no stdin to feed
+    # one -- see the stdin=DEVNULL note where this is actually launched.
+    raise RuntimeFailure("invalid_provider", provider + " has no headless invocation.")
 
 
 def _end_process_group(proc, grace=2):
@@ -406,7 +473,7 @@ class StudioRuntime:
     def capabilities(self):
         found = {}
         for name in AGENT_PROVIDERS + ("docker",):
-            path = shutil.which(name)
+            path = shutil.which(_provider_executable(name))
             ver = _run([path, "--version"]) if path else None
             found[name] = {"available": bool(path), "path": path,
                            "version": ver["stdout"].strip() if ver and ver["ok"] else None}
@@ -417,7 +484,11 @@ class StudioRuntime:
         return {"tools": found, "settings": self.settings, "storageRoot": str(self.storage_root),
                 "supportedJobs": ["tutorial-build", "tutorial-test"],
                 "agentMode": "installed-interactive-cli", "liveTopics": True, "physics": True,
-                "deployment": "project-compose"}
+                "deployment": "project-compose",
+                # Not every AGENT_PROVIDERS entry works for "Resolve with coding agent" -- see
+                # HEADLESS_AGENT_PROVIDERS above. The front end uses this to steer a user away
+                # from picking a provider there that can only ever fail for that one feature.
+                "headlessProviders": list(HEADLESS_AGENT_PROVIDERS)}
 
     def _cwd(self, project_root, mode):
         if mode not in ("project", "workspace", "repository"):
@@ -434,7 +505,7 @@ class StudioRuntime:
         root = _root(project_root)
         provider = request.get("provider", self.settings.get("agentProvider", "codex"))
         if provider not in AGENT_PROVIDERS:
-            raise RuntimeFailure("invalid_provider", "Choose Codex, Claude or Gemini.")
+            raise RuntimeFailure("invalid_provider", "Choose Codex, Claude, Gemini or Antigravity.")
         task = request.get("task", "")
         if not isinstance(task, str) or not task.strip() or len(task) > 20000 or "\x00" in task:
             raise RuntimeFailure("invalid_task", "Enter a task of 1–20,000 characters.")
@@ -442,10 +513,13 @@ class StudioRuntime:
         if not isinstance(selected, list) or len(selected) > 100 or any(not isinstance(x, str) or len(x) > 200 for x in selected):
             raise RuntimeFailure("invalid_selection", "Selected module IDs must be a short list of strings.")
         cwd = self._cwd(root, request.get("cwd", self.settings.get("agentCwd", "project")))
-        executable = shutil.which(provider)
+        executable = shutil.which(_provider_executable(provider))
         if not executable:
-            raise RuntimeFailure("missing_agent", provider + " is not installed or not on PATH.", 503)
-        skill = self.repo_root / "skills/ros-model/SKILL.md"
+            raise RuntimeFailure("missing_agent", provider + " is not installed — looked for '" + _provider_executable(provider) + "' on PATH.", 503)
+        # Antigravity discovers skills in its own format/location (.agents/skills/); hand it
+        # that copy rather than the Claude-format one the other three providers get.
+        skill = (self.repo_root / ".agents/skills/ros-model/SKILL.md" if provider == "antigravity"
+                 else self.repo_root / "skills/ros-model/SKILL.md")
         ident = uuid.uuid4().hex
         path = _safe_file(root, ".studio/agent/" + ident + ".md")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -472,7 +546,10 @@ class StudioRuntime:
             "## Scope and instructions",
             "Read the project/repository instructions and the referenced model skill explicitly.",
             "Do not assume the selected coding tool discovers this skill or provides plugin environment variables.",
-            "Resolve skill script paths against the tooling repository above.",
+            "Resolve skill script paths against the tooling repository above: your working "
+            "directory is the PROJECT, not that repository, so a relative path the skill "
+            "mentions (scripts/..., assets/...) means <tooling repository>/scripts/..., not "
+            "a path under your working directory.",
             "The ros-model skill generates .ros2/.rossystem/.ros models; it excludes ROS source/launch/package.xml generation.",
             "For existing ROS source, run its required extractors. Preserve unresolved findings and handwritten code.",
             "General coding work is separate from that model skill. ROS builds/tests must run in Docker.",
@@ -488,7 +565,8 @@ class StudioRuntime:
         prompt = "User task:\n" + task + "\n\nProject context and instructions:\n" + content.split("## User task", 1)[0] + "\nFull saved handoff: " + str(path) + "\nWork interactively on the user task above."
         record = {"handoffId": ident, "projectRoot": str(root), "cwd": str(cwd), "provider": provider,
                   "taskPath": str(path), "taskHash": _digest(content.encode()), "skillPath": str(skill),
-                  "argv": [executable, prompt], "inputHashes": hashes, "createdAt": time.time(),
+                  "argv": _interactive_argv(executable, provider, prompt), "inputHashes": hashes,
+                  "createdAt": time.time(),
                   "message": "Handoff prepared. Open the interactive terminal explicitly to start."}
         _write_json(self._handoffs_root / (ident + ".json"), record)
         return record
@@ -808,11 +886,20 @@ class StudioRuntime:
             if not isinstance(f, dict) or not isinstance(f.get("reason"), str):
                 raise RuntimeFailure("invalid_flags", "Each flag needs at least a reason.")
         provider = request.get("provider", self.settings.get("agentProvider", "codex"))
-        if provider not in AGENT_PROVIDERS:
+        if provider == "antigravity":
+            raise RuntimeFailure(
+                "unsupported_provider",
+                "Antigravity CLI is not available for this background check: its headless mode "
+                "auto-denies any tool call it cannot prompt for approval on, including reading "
+                "the very source files this check needs to read, unless it is run with a "
+                "blanket permission bypass this app does not enable on its own. Choose Codex, "
+                "Claude or Gemini here, or use \"Work with your coding CLI\" for an interactive "
+                "Antigravity session instead — there, you approve each tool call yourself.", 422)
+        if provider not in HEADLESS_AGENT_PROVIDERS:
             raise RuntimeFailure("invalid_provider", "Choose Codex, Claude or Gemini.")
-        executable = shutil.which(provider)
+        executable = shutil.which(_provider_executable(provider))
         if not executable:
-            raise RuntimeFailure("missing_agent", provider + " is not installed or not on PATH.", 503)
+            raise RuntimeFailure("missing_agent", provider + " is not installed — looked for '" + _provider_executable(provider) + "' on PATH.", 503)
         skill = self.repo_root / "skills/ros-model/SKILL.md"
         ident = uuid.uuid4().hex
         job_root = self._jobs_root / ident
@@ -885,9 +972,14 @@ class StudioRuntime:
                         return
                     # start_new_session=True: its own process group, so a timeout or a cancel
                     # (see cancel_job) can kill the whole tree via _end_process_group instead of
-                    # just this one process and leaving its real children running.
+                    # just this one process and leaving its real children running. stdin=DEVNULL:
+                    # this process has no terminal and nothing to type into one -- a CLI that
+                    # misinterprets its argv as an invitation to read from stdin (rather than
+                    # erroring on an unrecognised invocation) should hit EOF immediately instead
+                    # of blocking silently until the 600s timeout below.
                     proc = subprocess.Popen(record["argv"], cwd=source_root, stdout=log,
-                                            stderr=subprocess.STDOUT, shell=False, start_new_session=True)
+                                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                            shell=False, start_new_session=True)
                     self._processes[ident] = proc
                 try:
                     code = proc.wait(timeout=600)

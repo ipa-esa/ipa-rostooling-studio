@@ -80,7 +80,7 @@ behind a reverse proxy will trip the `Host` check.
 | PyYAML | the repositories feature (`repositories.repos` is a vcstool manifest) | **the server will not start** — verified: it dies with `ImportError: No module named 'yaml'` from `studio_repositories.py`, before it serves anything |
 | `git` on `PATH` | fetching / inspecting linked repositories, submodules | those actions report "Git is unavailable" |
 | A Java runtime | the optional language-server oracle inside a model check | the check still runs; the oracle row says `not-run` and names the reason |
-| `codex`, `claude` or `gemini` on `PATH` | **the coding-agent features** — see below | `503`, "… is not installed or not on PATH." |
+| `codex`, `claude`, `gemini` or `agy` (Antigravity CLI) on `PATH` | **the coding-agent features** — see below | `503`, "… is not installed or not on PATH." |
 
 ### The coding-agent features need a CLI actually installed
 
@@ -97,7 +97,17 @@ network call from the server itself — it runs the binary that is already on yo
 - **The "✧ Coding agent" handoff drawer**, which prepares a task briefing and opens an
   **interactive** terminal session for you to drive.
 
-Supported binaries, and how each is invoked headlessly:
+Supported for the **interactive** handoff drawer — all four:
+
+| Provider | Binary | Interactive invocation |
+|---|---|---|
+| Codex | `codex` | `codex "<prompt>"` |
+| Claude Code | `claude` | `claude "<prompt>"` |
+| Gemini CLI | `gemini` | `gemini "<prompt>"` |
+| Antigravity CLI | `agy` | `agy -i "<prompt>"` (seeded-interactive mode) |
+
+Supported for **"Resolve with coding agent"** (headless, background job, output parsed) — only
+three:
 
 | Provider | Binary | Headless invocation |
 |---|---|---|
@@ -105,12 +115,49 @@ Supported binaries, and how each is invoked headlessly:
 | Claude Code | `claude` | `claude -p "<prompt>"` |
 | Gemini CLI | `gemini` | `gemini -p "<prompt>"` |
 
-Antigravity is **not** supported: it ships as an IDE rather than a confirmed headless-prompt CLI,
-and guessing a binary name would fail quietly instead of loudly.
+**Antigravity CLI is deliberately excluded from the headless feature.** Two things were checked
+against a real installed `agy` (1.2.4) before deciding this, not assumed:
 
-If none of the three is installed, the app still works — you just cannot use those two features.
-They fail cleanly with a `missing_agent` error naming the provider, rather than hanging or
-half-working. Pick which one to use under ⚙ (Preferences); the default is `codex`.
+- A publicly reported bug where `agy -p`/`--print` silently drops stdout when it isn't attached
+  to a real terminal
+  ([google-antigravity/antigravity-cli#76](https://github.com/google-antigravity/antigravity-cli/issues/76))
+  did **not** reproduce — tested against the exact production invocation (`subprocess.Popen`,
+  stdout redirected to a file, its own process group), including a full run of the
+  marker-delimited-JSON protocol this feature actually uses. Output came through intact both
+  times.
+- What actually blocks it: headless `agy -p` auto-**denies** any tool call it cannot prompt for
+  approval on — including a plain file read — unless the run passes a permission-widening flag.
+  Confirmed live: asking it to read one file headlessly produced "no output produced — a tool
+  required the 'read_file' permission that headless mode cannot prompt for, so it was
+  auto-denied". Two ways around that were tried, not just assumed:
+  - `--dangerously-skip-permissions` (its own name for what it is) — read the file and answered
+    correctly, but also auto-approves everything else, including writes and shell commands
+    anywhere on the machine.
+  - `--add-dir <sourceRoot>`, hoping for something narrower — it did let the read through, but
+    it also silently approved a **write** inside that same directory in a follow-up test (a
+    file the agent was asked to create there was actually created, no error, no denial). That
+    directly breaks this feature's own guarantee that it never edits your source or your
+    project, so it's not the narrow fix it looked like.
+
+  Nothing found grants headless, read-only-only access scoped to one directory without either
+  widening to real write/exec access too, or requiring a standing edit to `agy`'s own
+  `settings.json` on the machine (its error message mentions a `permissions.allow` rule) — which
+  this app also won't do on its own, since that's a persistent change to software outside its
+  control, not a per-request setting. Since this feature's entire job is reading real source
+  under a directory you point it at, and the two per-invocation options both grant materially
+  more than that, Antigravity stays out of it.
+
+Choosing Antigravity for "Resolve with coding agent" returns a clear `unsupported_provider`
+error explaining this, rather than silently failing or requiring you to discover it by trial.
+It works normally for the interactive drawer, which opens a real terminal a person drives — the
+person approves each tool call themselves, the same way they would in any interactive `agy`
+session.
+
+If your chosen provider isn't installed, the app still works — you just cannot use that feature
+with it. It fails cleanly with a `missing_agent` error naming the provider, rather than hanging
+or half-working. Pick which one to use in the "✧ Coding assistant" panel's "Coding tool"
+dropdown; the default is `codex`. (There's no separate default-provider control under
+⚙ Preferences yet — the dropdown in the assistant panel is the only place this is set today.)
 
 ## Changing the front end
 

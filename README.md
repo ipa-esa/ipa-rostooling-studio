@@ -38,10 +38,12 @@ Two things that trip people up on first contact, repeated here so they are not b
 - The front end's React half is **built**. Changes to `web/studio/frontend/src/*.jsx` do nothing
   until you run `npm run build` in `web/studio/frontend/`. The plain scripts next to it
   (`web/studio/app.js` and friends) need no build.
-- "Resolve with coding agent" shells out to a coding-agent CLI **already installed on your
-  machine** — `codex`, `claude` or `gemini` on `PATH`. There is no API key and no bundled agent.
-  With none of them installed the feature fails cleanly with a message saying so, and the rest of
-  the app is unaffected.
+- Every coding-agent feature shells out to a CLI **already installed on your machine** —
+  `codex`, `claude`, `gemini` or `agy` (Antigravity CLI) on `PATH`. There is no API key and no
+  bundled agent. With none of them installed the feature fails cleanly with a message saying so,
+  and the rest of the app is unaffected. Antigravity is available for the **interactive**
+  handoff drawer only, not "Resolve with coding agent" (see
+  [`docs/coresense-studio.md`](docs/coresense-studio.md) for why).
 
 ---
 
