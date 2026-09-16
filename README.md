@@ -45,6 +45,49 @@ Two things that trip people up on first contact, repeated here so they are not b
 
 ---
 
+## Everything also works in Google Antigravity
+
+`.agents/skills/` mirrors every skill/command/subagent this plugin has for Claude Code, in
+Antigravity's format:
+
+| Antigravity skill | Ported from | What changed |
+|---|---|---|
+| `.agents/skills/ros-model/` | `skills/ros-model/` | `argument-hint:` folded into `description` (not part of Antigravity's schema); every `${CLAUDE_PLUGIN_ROOT}` path made workspace-relative; the `references/type-catalogue.md`/`node-catalogue.md` mentions marked explicitly as the repo-root `references/` folder, not this skill's own (Antigravity gives `references/` inside a skill folder an official meaning, which this repo's layout happens to collide with); an explicit "run the linter yourself" note added, replacing an implication that a `PostToolUse` hook auto-enforces it |
+| `.agents/skills/ros-plot/` | `commands/ros-plot.md` | `${CLAUDE_PLUGIN_ROOT}` (Claude-only) replaced with a workspace-relative path; `allowed-tools:` dropped (not part of Antigravity's schema) |
+| `.agents/skills/update-ros-catalog/` | `commands/update-ros-catalog.md` | the "launch a cheap `Agent` sub-call with `model: haiku`" step, which is Claude Code's own subagent-spawning mechanism, replaced with a plain instruction to fetch the sources directly, plus a separate "Cost note" telling whoever is steering that this task is cheap enough to hand to a smaller model or sub-agent if one is available — not a conditional inside the steps themselves, which an agent has no way to evaluate |
+| `.agents/skills/ros-modeler/` | `agents/ros-modeler.md` | Claude subagent-only frontmatter (`model`, `effort`, `maxTurns`, `tools`, `skills`) dropped — Antigravity skills only take `name`/`description`. Without those fields this skill lost its whole reason to exist as a *separate* thing (a locked-down tool list, a cheaper model, its own context) and its description started overlapping `ros-model`'s enough that Antigravity's auto-discovery could plausibly pick either for the same prompt — so the `description` was narrowed to "pre-flight checklist, use *in addition to* `ros-model`, never instead of it," and the body now opens with an explicit instruction to read `ros-model`'s `SKILL.md` first, rather than asserting it's "preloaded" the way the Claude subagent guaranteed |
+
+Antigravity's `SKILL.md` format (frontmatter `name` + `description`, a `references/`
+subfolder, `$ARGUMENTS` substitution, `/<skill-name>` as an explicit slash command) is the
+same standard Claude Code uses, so none of the rule content needed rewriting — only the
+Claude-specific plumbing (env vars, tool-restriction fields, subagent frontmatter) that has no
+Antigravity equivalent. Antigravity discovers skills at
+`<workspace-root>/.agents/skills/<name>/SKILL.md` (the currently-recommended path; it also
+still reads the older singular `.agent/skills/`, but new work should target the plural form).
+
+Two things this does **not** cover, on purpose:
+
+- **The auto-lint hook.** In Claude Code, `hooks/hooks.json` fires `rosmodel_lint.py` after
+  every write to a `.ros2`/`.rossystem` file automatically. Antigravity has no equivalent
+  auto-run mechanism, so every ported skill that touches a model file — including `ros-model`
+  itself — now says explicitly to run the linter by hand.
+- **Workflows.** Antigravity has a separate Workflow mechanism (`*.md` files, most resembling
+  Claude commands) that is being retired in favor of Skills on 2026-11-01 — so the two
+  commands were ported as Skills (above), not Workflows, deliberately.
+- **Using this outside this repo.** Every ported skill resolves `scripts/…` and `assets/…`
+  relative to the open workspace's root, the same way the Claude Code versions resolve them
+  relative to the plugin root. That's fine as long as the open Antigravity workspace *is* this
+  repo. Copying just `.agents/skills/` into some other ROS project gives that workspace a
+  skill whose extractors, linter and catalogue indexes are missing — it would need `scripts/`
+  and `assets/` vendored alongside it too.
+
+Two copies of each file is a real drift risk: an edit to, say, `skills/ros-model/SKILL.md`
+will not automatically reach `.agents/skills/ros-model/SKILL.md`. There was no portable way
+around that here — a symlink would need `core.symlinks` set up correctly on every clone, and
+this repo is used from Windows too (see below).
+
+---
+
 ## Prerequisites — read this first
 
 | Requirement | Needed for | Status on this machine |
@@ -154,6 +197,11 @@ skills/ros-model/
   references/ros2-syntax.md     .ros2 + .ros grammar, verbatim productions
   references/rossystem-syntax.md .rossystem grammar + RosSystemValidator behaviour
   references/worked-examples.md  3 full transformations, failure catalogue, source-defect policy
+.agents/skills/                 every skill/command/subagent above, in Antigravity's format (see below)
+  ros-model/                    mirrors skills/ros-model/
+  ros-plot/                     mirrors commands/ros-plot.md
+  update-ros-catalog/           mirrors commands/update-ros-catalog.md
+  ros-modeler/                  mirrors agents/ros-modeler.md
 scripts/rosmodel_lint.py        static linter, 81 rules (.ros / .ros2 / .rossystem)
 scripts/ros_plot.py             /ros-plot backend: .rossystem -> self-contained interactive HTML (read-only)
 scripts/ros_studio.py           deterministic engine: init (seed) / generate (emit + lint, oracle) / diff

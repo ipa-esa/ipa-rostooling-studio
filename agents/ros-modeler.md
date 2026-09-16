@@ -38,9 +38,7 @@ These cause hard errors or silent semantic corruption. Never violate them.
 5. Prefer not to emit `lease_duration:`, `liveliness:`, `lifespan:` or `deadline:` -- LEGAL since
    the pin was lifted 2026-07-21, but no corpus model uses them and older toolchain builds
    cannot lex them. If you emit a duration it is NANOSECONDS, signed-32-bit max (~2.147 s), or
-   `infinite`. (Superseded text follows: the pinned oracle
-   has no token for them and will fail to lex. Restrict QoS to `reliability:` and
-   `durability:` unless the caller supplies a concrete value for the others.
+   `infinite`.
 6. Never emit `msgs:`, `srvs:` or `actions:` inside a `.ros2` file. `AmentPackage` is the entry
    rule there and admits only `fromGitRepo:` / `artifacts:` / `dependencies:`. Message specs
    live in `.ros` files.
