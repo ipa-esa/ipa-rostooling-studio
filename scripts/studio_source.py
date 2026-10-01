@@ -80,6 +80,12 @@ class StudioSource:
             raise SourceError('source_missing', 'Workspace directory does not exist.', 404)
         return root
 
+    @staticmethod
+    def _default_source(root):
+        # A linked folder that is itself a package owns its src/ (C++ sources), so scan the
+        # package root; only a workspace without its own package.xml is scanned at src/.
+        return root / 'src' if (root / 'src').is_dir() and not (root / 'package.xml').is_file() else root
+
     def _inventory(self, root, source):
         records, total, seen = [], 0, set()
         for base, dirs, files in os.walk(source, followlinks=True):
@@ -123,7 +129,7 @@ class StudioSource:
 
     def inspect(self, root):
         root = self._root(root)
-        source = root / 'src' if (root / 'src').is_dir() else root
+        source = self._default_source(root)
         records = self._inventory(root, source)
         project = _json(root / 'project.json', {})
         packages, diagnostics = [], []
@@ -177,7 +183,7 @@ class StudioSource:
             raise SourceError('source_plan', 'Unknown extraction purpose.')
         root = self._root(root)
         base_project_hash = _project_hash(root) if purpose == 'import' else None
-        source = _relative(root, request.get('sourcePath') or ('src' if (root / 'src').is_dir() else '.'), directory=True)
+        source = _relative(root, request.get('sourcePath') or self._default_source(root).relative_to(root).as_posix(), directory=True)
         launch = _relative(root, request['launchPath']) if request.get('launchPath') else None
         if launch and not launch.name.endswith('.py'):
             raise SourceError('launch_type', 'The static launch extractor supports Python launch files.', 422)
@@ -265,7 +271,8 @@ class StudioSource:
         record = {'ok': True, 'planId': ident, 'sourceRoot': str(root), 'sourcePath': source.relative_to(root).as_posix(),
                   'launchPath': launch.relative_to(root).as_posix() if launch else None,
                   'createdAt': time.time(), 'inputHashes': hashes, 'baseProjectHash': base_project_hash, 'purpose': purpose,
-                  'project': project, 'canImport': bool(project and project['nodes'] and not errors),
+                  # A message-only package has no nodes but its types are still a reusable catalogue contract.
+                  'project': project, 'canImport': bool(project and (project['nodes'] or purpose == 'catalogue' and project['types']) and not errors),
                   'files': files, 'diagnostics': diagnostics, 'flags': flags, 'candidateConnections': candidates,
                   'changes': changes, 'coverage': {'mode': 'static', 'complete': not incomplete,
                      'packages': len(packages['packages']), 'files': len(inputs), 'launchExecuted': False,

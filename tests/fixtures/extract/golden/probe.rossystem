@@ -36,6 +36,7 @@ probe:
       from: "probe_pilot.probe_pilot" # project-local, see probe_pilot.ros2
       interfaces:
         - "/probe/enable_pub": pub-> "probe_pilot_node::/probe/enable"
+        - "/probe/{self.get_name()}/heartbeat_pub": pub-> "probe_pilot_node::/probe/{self.get_name()}/heartbeat"
         - "/probe/status_sub": sub-> "probe_pilot_node::/probe/status"
       parameters:
         - "enabled": "probe_pilot_node::enabled"

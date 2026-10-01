@@ -37,6 +37,17 @@ class StudioCatalogue:
         repo = match[0]
         return Path(repo['localPath']), {**repo, 'id': repo['path'], 'name': repo['path'].split('/')[-1]}
 
+    @staticmethod
+    def _group_identity(repository, root):
+        # One group per linked folder: several folders of one Git checkout share its URL, and
+        # a URL-only identity let each publish replace the previous folder's current pointer.
+        # The checkout root keeps the URL-only identity, so earlier catalogue groups still match.
+        if not repository.get('url'):
+            return str(root)
+        top = next((p for p in [root, *root.parents] if (p / '.git').exists()), root)
+        within = root.relative_to(top).as_posix()
+        return repository['url'] if within == '.' else [repository['url'], within]
+
     def inspect(self, pid, request=None):
         request = request or {}
         root, repository = self._selection(pid, request.get('repositoryId'))
@@ -52,16 +63,30 @@ class StudioCatalogue:
             source_request['sourcePath'] = request['sourcePath']
         converted = self.source.preview(root, source_request, purpose='catalogue')
         if not converted['canImport']:
-            fail('No valid reusable node contracts were extracted. Review diagnostics.', 'catalogue_empty', 422,
+            nodes = (converted['project'] or {}).get('nodes')
+            defined = converted['extraction']['packages'].get('interface_packages') or {}
+            known = sum(len(p['catalogue']) for p in defined.values())
+            if not nodes and not converted['flags'] and known and known == sum(len(p['defined']) for p in defined.values()):
+                fail('This package defines %d message/service/action type(s) and no nodes. All of them are already in the '
+                     'built-in type catalogue, so there is nothing new to add: components can use them directly.' % known,
+                     'catalogue_empty', 422, {'diagnostics': converted['diagnostics'], 'flags': [], 'interfacePackages': defined})
+            fail('No valid reusable node contracts were extracted. Review diagnostics.' if nodes else
+                 'No node contracts could be extracted: every ROS declaration found (%d) is not literal in the source and '
+                 'needs review. See flags.' % len(converted['flags']) if converted['flags'] else
+                 'No ROS nodes were found in this package: its code declares no publishers, subscribers, services, '
+                 'actions or parameters. It may be a description, message or configuration-only package, which has '
+                 'no node contracts to reuse.', 'catalogue_empty', 422,
                  {'diagnostics': converted['diagnostics'], 'flags': converted['flags']})
-        group_id = digest(repository.get('url') or str(root))[:24]
+        group_id = digest(self._group_identity(repository, root))[:24]
         version = digest({'inputs': converted['inputHashes'], 'project': converted['project'],
                           'files': converted['files'], 'commit': repository.get('currentCommit')})[:24]
         entries = []
         project = converted['project']
         for node in project['nodes']:
             entry_key = digest([node['pkg'], node['node'], node.get('artifact')])[:24]
-            flags = [f for f in converted['flags'] if f.get('package') in (None, node['pkg'])]
+            # A flag the extractor attributed to one node stays with it; the rest are package-level.
+            flags = [f for f in converted['flags'] if f.get('package') in (None, node['pkg'])
+                     and f.get('artifact') in (None, node.get('artifact'))]
             entries.append({'id': ':'.join([group_id, version, entry_key]),
                             'package': node['pkg'], 'name': node['node'], 'artifact': node.get('artifact'),
                             'interfaceKinds': sorted({f['kind'] for f in node['ifaces']}),
@@ -97,13 +122,27 @@ class StudioCatalogue:
                  'diagnostics', 'entries', 'types', 'packages', 'inputHashes', 'sourceRoot')}
         group['id'] = group.pop('groupId')
         group['publishedAt'] = stamp()
+        result = {'ok': True, 'group': group}
+        if not group['entries'] and group['types']:
+            # A message-only package has no node to instantiate, which is how a group's types
+            # otherwise reach the project: add them now, so the Data types tab and type picker
+            # list them. Same rule as instantiate: never overwrite a different definition.
+            with self.store.lock(pid):
+                current = self.store.get_project(pid)
+                project = copy.deepcopy(current['project'])
+                for name, value in group['types'].items():
+                    if name in project['types'] and project['types'][name] != value:
+                        fail('The project already defines a different type: ' + name, 'catalogue_type_conflict', 409)
+                    project['types'][name] = copy.deepcopy(value)
+                if project['types'] != current['project']['types']:
+                    result = {**self.store.save_project(pid, {'expectedRevision': current['revision'], 'project': project}), **result}
         with self.mutex:
             prefix = group['id'] + '/' + group['version'] + '/'
             manifest = safe_path(self.directory, prefix + 'manifest.json')
             if manifest.exists():
                 group = json.loads(manifest.read_text())
                 atomic(safe_path(self.directory, group['id'] + '/current.json'), encode({'version': group['version']}))
-                return {'ok': True, 'group': group}
+                return {**result, 'group': group}
             group['contractFiles'] = []
             for item in plan['files']:
                 rel = prefix + item['path']
@@ -112,7 +151,7 @@ class StudioCatalogue:
             atomic(safe_path(self.directory, prefix + 'manifest.json'), encode(group))
             # Publishing this final pointer makes a complete immutable version visible.
             atomic(safe_path(self.directory, group['id'] + '/current.json'), encode({'version': group['version']}))
-        return {'ok': True, 'group': group}
+        return result
 
     def list(self, pid, request=None):
         self.store.root(pid)
@@ -129,14 +168,22 @@ class StudioCatalogue:
                 if not re.fullmatch('[a-f0-9]{24}', version):
                     fail('Invalid catalogue version.', 'catalogue_invalid', 422)
                 group = json.loads(safe_path(self.directory, folder.name + '/' + version + '/manifest.json').read_text())
-                entries = group['entries']
-                query = str(request.get('query', '')).lower()
-                kind, message = request.get('kind'), request.get('messageType')
-                group['entries'] = [e for e in entries if (not query or query in json.dumps([e['package'], e['name'], e['messageTypes']]).lower())
-                                    and (not kind or kind in e['interfaceKinds'])
-                                    and (not message or message in e['messageTypes'])]
-                if group['entries']:
-                    groups.append(group)
+                groups.append(group)
+        # A folder published before groups were per-folder may also sit in its checkout's
+        # URL-keyed group; show only the newest publication of each source folder.
+        newest = {}
+        for group in groups:
+            key = group.get('sourceRoot') or group['id']
+            if key not in newest or group.get('publishedAt', '') > newest[key].get('publishedAt', ''):
+                newest[key] = group
+        query = str(request.get('query', '')).lower()
+        kind, message = request.get('kind'), request.get('messageType')
+        groups = [g for g in groups if newest[g.get('sourceRoot') or g['id']] is g]
+        for group in groups:
+            group['entries'] = [e for e in group['entries'] if (not query or query in json.dumps([e['package'], e['name'], e['messageTypes']]).lower())
+                                and (not kind or kind in e['interfaceKinds'])
+                                and (not message or message in e['messageTypes'])]
+        groups = [g for g in groups if g['entries']]
         entries = [{**e, 'repositoryName': g['repository']['name'], 'repositoryId': g['repository']['id'],
                     'groupId': g['id'], 'version': g['version']} for g in groups for e in g['entries']]
         return {'ok': True, 'groups': groups, 'templates': entries, 'filters': {

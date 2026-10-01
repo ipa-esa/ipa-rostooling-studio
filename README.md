@@ -42,7 +42,8 @@ Two things that trip people up on first contact, repeated here so they are not b
   `codex`, `claude`, `gemini` or `agy` (Antigravity CLI) on `PATH`. There is no API key and no
   bundled agent. With none of them installed the feature fails cleanly with a message saying so,
   and the rest of the app is unaffected. Antigravity is available for the **interactive**
-  handoff drawer only, not "Resolve with coding agent" (see
+  handoff drawer only, not the background (headless, read-only) features "Resolve with coding
+  agent" and "Find packages" (see
   [`docs/coresense-studio.md`](docs/coresense-studio.md) for why).
 
 ---
@@ -211,7 +212,7 @@ scripts/_studio_common.py       shared HTML/CSS/JS primitives + emit vocabulary 
 scripts/README.md               rule reference + deviations + test evidence
 scripts/studio_server.py        CoreSense Studio: the local HTTP service (routes live in _route)
 scripts/studio_store.py         its project store: projects, revisions, evidence, recovery
-scripts/studio_runtime.py       coding-agent handoff + the headless flag-resolution job system
+scripts/studio_runtime.py       coding-agent handoff + headless read-only agent jobs (flag resolution, package suggestions)
 scripts/studio_repositories.py  linking/fetching ROS source repos, *.repos deps, Git submodules
 scripts/studio_source.py        static extraction of ROS contracts from source
 scripts/studio_catalogue.py     the reusable component catalogue

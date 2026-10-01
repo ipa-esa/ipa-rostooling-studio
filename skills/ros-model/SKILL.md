@@ -1,6 +1,6 @@
 ---
 name: ros-model
-description: Generate and validate RosTooling model files (.ros2 AmentPackage, .rossystem system composition, .ros message specs) for the Fraunhofer IPA ROS 2 Xtext toolchain. Use when asked to model a ROS 2 package, node, its publishers/subscribers/services/actions/parameters, or to wire nodes into a system with connections.
+description: Generate and validate RosTooling model files (.ros2 AmentPackage, .rossystem system composition, .ros message specs) for the Fraunhofer IPA ROS 2 Xtext toolchain. Use when asked to model a ROS 2 package, node, its publishers/subscribers/services/actions/parameters, or to wire nodes into a system with connections. Also use when asked which existing ROS packages fit a project.
 argument-hint: "[ros2 package path or system name]"
 ---
 
@@ -22,6 +22,7 @@ declares (see *Output layout*), not one per node.
 - Authoring or fixing `.ros2`, `.rossystem`, or `.ros` files.
 - Converting a ROS 2 package / launch file / node introspection dump into RosTooling models.
 - Reviewing an existing model against the grammar and validators.
+- Suggesting which existing ROS packages a project can reuse (see *Package discovery*).
 
 ## When not to use
 
@@ -30,6 +31,65 @@ declares (see *Output layout*), not one per node.
   description reaches a model only as a `type: String` parameter whose value is a quoted path or an
   empty string `""`.
 - `.ros1` files. Out of scope.
+
+## Package discovery: which existing ROS packages fit this project
+
+Use this when asked which ROS packages a project can reuse — before linking, extracting or
+modeling anything. It only *suggests*; the user picks.
+
+1. **Read the brief.** It is in the project's `project.json` under `studio.brief` (`purpose`,
+   `users`, `environment`, `constraints`, `acceptance`), with the behaviour steps in
+   `studio.behavior` and the acceptance criteria in `studio.criteria`.
+2. **Ask the user first** whether they have vendor-specific ROS packages to include, and get a
+   path or URL. Robot vendors (AgiBot, Dobot, ...) ship packages with the robot that are often
+   not open source and not on any public list, so you will not find them by searching. Do not
+   search until they answer. If you are running non-interactively, say in the output (`about`)
+   that you could not ask, and continue without them.
+3. **Search in this order:** the user's workspace and vendor packages, then
+   `references/popular-ros-packages.md`, then (optional) the web. **Never invent a package
+   name**: every suggestion must point at a real path you saw on disk or a real URL you opened.
+4. **Give each suggestion a plain-English reason** tied to a specific behaviour step or
+   acceptance criterion ("Look step; acceptance 2"), not a generic description of the package.
+5. **Write `package-suggestions.json` in the project root**, then tell the user to tick the
+   packages they want under Source repositories in Studio. Do **not** link, clone or extract
+   anything in this step — that happens after the user picks.
+
+The Studio "Suggested for this project" list reads exactly this shape:
+
+```json
+{
+  "about": "One or two sentences: what this list is for, what you searched, when.",
+  "suggestions": [
+    {
+      "id": "agibot_perception",
+      "name": "agibot_perception",
+      "source": "workspace",
+      "path": "/abs/path/to/agibot_perception",
+      "priority": "core",
+      "fit": "Look step; acceptance 1 and 2",
+      "reason": "Why this package serves that step, in plain English."
+    },
+    {
+      "id": "py_trees_ros",
+      "name": "py_trees_ros",
+      "source": "online",
+      "url": "https://github.com/splintered-reality/py_trees_ros.git",
+      "install": "apt: ros-jazzy-py-trees-ros",
+      "priority": "recommended",
+      "fit": "Sequencing; acceptance 7",
+      "reason": "..."
+    }
+  ],
+  "notInList": ["Package X: why it was considered and left out."]
+}
+```
+
+- `id`: unique, lowercase, `a-z0-9_` — Studio uses it as the linked repository's name.
+- `source`: exactly `workspace` (give an absolute `path`) or `online` (give a `url`); any other
+  value is not shown.
+- `priority`: a short tag, e.g. `core`, `recommended`, `useful`, `optional`, `alternative`,
+  `reference`, `not-needed`.
+- `install` and `notInList` are optional.
 
 ## Converting real source: run the extractors first — MANDATORY
 

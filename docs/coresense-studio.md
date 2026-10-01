@@ -94,8 +94,41 @@ network call from the server itself — it runs the binary that is already on yo
   flags it. This button runs an agent **headlessly** over the repository's source to trace what
   each flagged expression actually resolves to, and reports its findings for you to accept by
   hand. It never edits your source or your project.
-- **The "✧ Coding agent" handoff drawer**, which prepares a task briefing and opens an
-  **interactive** terminal session for you to drive.
+- **"Find packages"**, in the "✧ Coding assistant" panel. It first asks you in the panel
+  whether you have vendor-specific ROS packages (a folder path or URL, optional), then runs the
+  agent **headlessly** with the project brief and the "Package discovery" section of
+  `skills/ros-model/SKILL.md`. The agent prints a JSON list; **Studio** checks it against that
+  schema and writes `package-suggestions.json` into the project itself. A suggestion it cannot use
+  is moved to "considered but not listed" with the reason: a folder that does not exist, holds no
+  `package.xml` within 4 levels, or lies outside the project, the workspace and the vendor folders
+  you gave; a URL that is not `https://` (the only kind Studio fetches); an unknown `source`. The tick-list shows in
+  the panel and on the Repositories tab.
+- **"Pull & migrate to CoreSense"**, under that tick-list. For each ticked package a progress
+  dialog shows: link the folder (or fetch the URL) → extract (deterministic) → send only the
+  topic/service/action names the extractor could not read to "Resolve with coding agent" →
+  write what it traced into the catalogue preview (`POST …/catalogue/apply-agent`), each such
+  interface marked "agent — review" (a name that would duplicate one the node already has, or a
+  flag the preview never reported, is left flagged instead; the run must have read the preview's
+  own source folder) → publish. A name still holding `{…}` runtime placeholders is a warning in
+  the generation gate and the linter (`RM097`), not an error. Your published packages then sit at the top of
+  the Architecture catalogue under **"From your project"**, with a deterministic
+  **"Add selected packages & connect matching topics"** action: it places the packages' nodes
+  and connects publisher→subscriber, service server→client and action server→client pairs that
+  have the same ROS name and the same type, using the normal connection legality check, and
+  lists what it connected and what it skipped.
+- **The "✧ Coding agent" handoff drawer** ("Work in a terminal" in the same panel), which
+  prepares a task briefing and opens an **interactive** terminal session for you to drive.
+
+**Codex and Claude Code headless runs are read-only by flags, not only by instruction.** Claude
+Code runs with `--tools Read,Grep,Glob,WebSearch --permission-mode dontAsk` (Write, Edit and Bash
+are not in the session at all — checked: asked to create a file and run `touch`, it had no tool
+for either and nothing was created), `--strict-mcp-config` (no MCP servers, so none of your
+connected accounts) and `--setting-sources user` (the scanned folder's own `.claude/settings.json`
+and its hooks are ignored — checked: a hook there no longer ran, and the tool list held only the
+four tools above), plus `--add-dir` for the tooling repository and any vendor folder. Codex runs
+with `--sandbox read-only` and `--skip-git-repo-check` (the scanned folder is often not a git
+checkout, and Codex otherwise refuses to start). **Gemini is run unchanged: nothing enforces
+read-only there, it is only asked** (not verified here); the job's coverage text says so.
 
 Supported for the **interactive** handoff drawer — all four:
 
@@ -106,13 +139,13 @@ Supported for the **interactive** handoff drawer — all four:
 | Gemini CLI | `gemini` | `gemini "<prompt>"` |
 | Antigravity CLI | `agy` | `agy -i "<prompt>"` (seeded-interactive mode) |
 
-Supported for **"Resolve with coding agent"** (headless, background job, output parsed) — only
-three:
+Supported for the **headless** features ("Resolve with coding agent", "Find packages";
+background job, output parsed) — only three:
 
 | Provider | Binary | Headless invocation |
 |---|---|---|
-| Codex | `codex` | `codex exec "<prompt>"` |
-| Claude Code | `claude` | `claude -p "<prompt>"` |
+| Codex | `codex` | `codex exec --skip-git-repo-check --sandbox read-only "<prompt>"` |
+| Claude Code | `claude` | `claude -p "<prompt>" --tools … --permission-mode dontAsk --strict-mcp-config --setting-sources user` |
 | Gemini CLI | `gemini` | `gemini -p "<prompt>"` |
 
 **Antigravity CLI is deliberately excluded from the headless feature.** Two things were checked
@@ -155,8 +188,8 @@ session.
 
 If your chosen provider isn't installed, the app still works — you just cannot use that feature
 with it. It fails cleanly with a `missing_agent` error naming the provider, rather than hanging
-or half-working. Pick which one to use in the "✧ Coding assistant" panel's "Coding tool"
-dropdown; the default is `codex`. (There's no separate default-provider control under
+or half-working. Pick which one to use in the "✧ Coding assistant" panel (the "Find packages" view lists the
+four tools and marks Antigravity "interactive only"); the default is `codex`. (There's no separate default-provider control under
 ⚙ Preferences yet — the dropdown in the assistant panel is the only place this is set today.)
 
 ## Changing the front end
@@ -192,7 +225,9 @@ Inside a project there are two workspaces:
 - **Architecture**, with four tabs:
   - *Project brief* — purpose, acceptance criteria, behaviour and recovery.
   - *Architecture* — the graph. Select a node to inspect its package, interfaces and types; drag
-    to rearrange; draw connections with live legality checking.
+    to rearrange; draw connections with live legality checking. The toolbar's model-check icon
+    is followed by an **Open in VS Code** icon (`POST …/tools/open` with `{kind:"editor"}`), which
+    opens the project folder in the detected editor, or says plainly that none was found.
   - *Repositories* — link, extract, review, publish to the catalogue; check a linked repo for
     `*.repos` dependencies and Git submodules.
   - *Data types* — message, service and action definitions, persisted for generation.
@@ -224,6 +259,7 @@ Everything is under `--storage-root`:
   projects/<name>-<id>/
     project.json                    the model itself
     repositories.repos              vcstool manifest of linked repositories
+    package-suggestions.json        the latest "Find packages" result (written by Studio)
     src/vendor/<name>/              fetched checkouts
     .studio/local.json              local-only pointers to existing checkouts
     .studio/agent/                  prepared agent briefings
@@ -241,5 +277,6 @@ a list that can drift. In outline: `/api/bootstrap`, `/api/projects` (create/ope
 `/api/tools`, `/api/plugins`, `/api/settings`, and then per project under
 `/api/projects/<id>/…`: the project itself, `session`, `changes`, `reconcile`, `artifacts`,
 `file`, `generation/preview|apply`, `validate`, `evidence`, `recovery`, `source/…`,
-`repositories`, `repositories/dependencies`, `repositories/submodules`, `catalogue/…`,
+`repositories`, `repositories/dependencies`, `repositories/submodules`, `catalogue/…`
+(including `catalogue/resolve-flags` and `catalogue/apply-agent`), `packages/suggest`,
 `handoff`, `tools/open`, `runtime` and `jobs/…`.

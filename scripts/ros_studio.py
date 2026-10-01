@@ -2559,10 +2559,18 @@ def validate_project(project):
                 continue
             flag(n["id"], "interface '%s' (%s) has type '%s', which neither the vendored "
                           "catalogue nor this project defines — the server cannot resolve it. "
-                          "Define it under 'message types (.ros)', or use a catalogued type."
-                          % (f.get("name", "?"), f.get("kind", "?"), typ))
+                          "Link the package that defines it ('%s') so its types are extracted, "
+                          "define it under 'message types (.ros)', or use a catalogued type."
+                          % (f.get("name", "?"), f.get("kind", "?"), typ, typ.split("/", 1)[0]))
 
     glob_errs += _validate_types(project)
+
+    # Not blocking (the file is syntactically valid), but said out loud: the extractor keeps a
+    # runtime-built name as '{expr}' pieces, and that is not the real ROS name.
+    warnings = ["node '%s': %s '%s' — name not resolved, still a placeholder from runtime-built "
+                "code; resolve or rename it." % (n.get("label", "?"), f.get("kind", "?"), f.get("name"))
+                for n in project.get("nodes", []) if n.get("backing") != "sub"
+                for f in n.get("ifaces", []) if "{" in str(f.get("name")) or "}" in str(f.get("name"))]
 
     # A wrapped subsystem is a whole system this project will WRITE, not a reference to someone
     # else's file -- so the gate has to hold it to the same standard. It did not, and wrapping
@@ -2589,7 +2597,8 @@ def validate_project(project):
         for nid_, msgs in inner["byNode"].items():
             for m in msgs:
                 flag(nid_, "in subsystem '%s': %s" % (ref, m))
-    return {"global": glob_errs, "byNode": by_node}
+        warnings += ["subsystem '%s': %s" % (ref, m) for m in inner.get("warnings", [])]
+    return {"global": glob_errs, "byNode": by_node, "warnings": warnings}
 
 
 def _emitted_type_names(project):
@@ -3614,6 +3623,8 @@ def cmd_generate(args):
               "server would reject." % n_errs)
         return 1
 
+    for m in gate.get("warnings", []):
+        print("  GATE WARNING %s" % m)
     os.makedirs(outdir, exist_ok=True)
     files = generate_files(project)
     written = []

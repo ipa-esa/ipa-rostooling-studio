@@ -148,6 +148,7 @@ def load_system_index():
 
 _bni_cache = {"loaded": False, "value": None}
 _local_system_cache = {}
+_local_nodes_cache = {}
 
 
 def _build_node_index_module():
@@ -167,6 +168,25 @@ def _build_node_index_module():
         except Exception:
             _bni_cache["value"] = None
     return _bni_cache["value"]
+
+
+def load_local_nodes(base_dir):
+    """'<package>.<node>' for every node a .ros2 file NEXT TO the linted file declares -- a
+    project's own extracted models, staged beside the .rossystem that uses them. Same walk the
+    catalogue is built with (build_node_index.extract_ros2_nodes)."""
+    key = os.path.abspath(base_dir or ".")
+    if key not in _local_nodes_cache:
+        found = set()
+        bni = _build_node_index_module()
+        if bni is not None and HAVE_YAML:
+            for path in sorted(glob.glob(os.path.join(key, "*.ros2"))):
+                try:
+                    found |= {"%s.%s" % (pkg, node)
+                              for pkg, _art, node, _ifaces in bni.extract_ros2_nodes(bni.compose_yaml(path))}
+                except Exception:
+                    continue
+        _local_nodes_cache[key] = found
+    return _local_nodes_cache[key]
 
 
 def load_local_system(base_dir, ref):
@@ -1025,8 +1045,11 @@ class Linter(object):
             self.warn(open_flags[0], "RM097",
                       "%d item(s) the extractor could not read are still open%s "
                       "(first at line %d)." % (len(open_flags), found, open_flags[0]),
-                      "Each one is a name, type or parameter that is NOT in this model, "
-                      "carrying its file:line and the source expression. Resolve it under "
+                      "Each one is a name, type or parameter the extractor could not read, "
+                      "carrying its file:line and the source expression. Usually it is NOT in "
+                      "this model; a runtime-built name with a literal type is kept instead, "
+                      "with {...} placeholders for its runtime parts -- not a real ROS name "
+                      "either (it gets its own RM097 warning). Resolve it under "
                       "SKILL.md 8e -- trace it, infer it from a citable basis, or ask -- and "
                       "delete the comment ONLY once the thing it describes is actually in "
                       "the model. If it stays unresolved, leave the marker: rewording it "
@@ -1818,8 +1841,21 @@ class Linter(object):
                             "order is the grammar's declaration order (emission-profile rule 24): "
                             "%s." % " -> ".join(ROS2_NODE_BLOCKS))
 
+    def check_placeholder_name(self, name, line):
+        """An interface name still holding the extractor's {...} placeholders (a name built at
+        runtime). Syntactically valid, so a warning -- but it is not the real ROS name."""
+        if "{" in name or "}" in name:
+            self.warn(line, "RM097",
+                      "Interface name '%s' is not resolved -- it still holds a {...} "
+                      "placeholder from runtime-built code." % name,
+                      "Each {...} stands for a value computed at runtime (a parameter, f-string "
+                      "or variable), so no real ROS name looks like this and nothing will "
+                      "connect to it. Resolve it under SKILL.md 8e, or rename it by hand.")
+
     def check_ros2_interface(self, block, key, val):
         self.check_estring_quoting(key, "Interface", require_quotes=True)
+        if is_scalar(key):
+            self.check_placeholder_name(str(key.value), node_line(key))
         if not is_mapping(val):
             self.error(node_line(key), "RM038",
                        "Interface '%s' has no body." % key.value,
@@ -2573,6 +2609,10 @@ class Linter(object):
 
         pkg = ref.split(".", 1)[0]
         pkg_nodes = [k for k in index if k.split(".", 1)[0] == pkg]
+        if not pkg_nodes and ref in load_local_nodes(os.path.dirname(os.path.abspath(self.path))):
+            # A project-local node defined by a sibling .ros2 -- the case the hint below calls
+            # legitimate, now confirmed rather than assumed. An unknown node still warns.
+            return None
         if not pkg_nodes:
             self.warn(line, "RM084",
                       "'from:' reference '%s' is not in the vendored node catalogue." % ref,
@@ -2612,6 +2652,7 @@ class Linter(object):
                     continue
                 name, line = key.value, node_line(key)
                 self.check_estring_quoting(key, "Interface", require_quotes=True)
+                self.check_placeholder_name(next((x for x in (str(name), str(val.value)) if "{" in x or "}" in x), ""), line)
 
                 if name in local_seen:
                     self.error(line, "RM058",

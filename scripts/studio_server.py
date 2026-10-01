@@ -12,7 +12,62 @@ import argparse, json, mimetypes, os, re, secrets, sys, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
-from studio_store import StudioStore, StudioError, MAX_BYTES, fail
+from studio_store import StudioStore, StudioError, MAX_BYTES, fail, atomic, digest, encode, safe_path, uid
+
+# Extractor flag block -> interface kind (see extract_ros2_interfaces.py).
+_FLAG_KIND={'publishers':'pub','subscribers':'sub','services':'ss','serviceservers':'ss','clients':'sc','serviceclients':'sc','actionservers':'as','actionclients':'ac'}
+def apply_agent_resolutions(catalogue,pid,plan_id,job):
+    """Write a finished resolve-flags job's traced/inferred names into a catalogue preview
+    plan BEFORE it is published. Each changed or added interface carries 'agentResolved'
+    (resolution, citation, note, flag location, provider) so the UI can mark it "resolved by
+    agent -- review"; anything unresolved, ambiguous or not an interface name is left as it was
+    and counted as skipped. The plan gets a new version so its catalogue entry ids change too."""
+    if job.get('kind')!='resolve-flags' or job.get('state')!='passed' or not isinstance(job.get('resolutions'),list): fail('The agent run has no usable result.','job_not_done',409)
+    if not isinstance(plan_id,str) or not re.fullmatch('[a-f0-9]{32}',plan_id): fail('Select a catalogue conversion preview.')
+    path=safe_path(catalogue.directory,'plans/'+plan_id+'.json')
+    if not path.is_file(): fail('Catalogue preview does not exist.','not_found',404)
+    plan=json.loads(path.read_text())
+    if plan['projectId']!=pid: fail('This preview belongs to another project.','catalogue_scope',403)
+    if plan.get('agentApplied'): fail('Agent results were already applied to this preview.','already_applied',409)
+    # The job's flags came from the client: only trust them for the source this plan was read
+    # from, and only flags this plan itself reported.
+    if not job.get('sourceRoot') or str(Path(job['sourceRoot']).resolve())!=str(Path(plan['sourceRoot']).resolve()): fail('The agent run read a different source folder than this preview.','job_scope',409)
+    planned={(f.get('at'),f.get('reason')) for f in plan.get('flags',[])+[f for e in plan['entries'] for f in e.get('flags',[])]}
+    flags,applied,skipped=job.get('flags') or [],[],[]
+    for r in job['resolutions']:
+        i=r.get('index') if isinstance(r,dict) else None; flag=flags[i] if isinstance(i,int) and 0<=i<len(flags) else None
+        kind=_FLAG_KIND.get((flag or {}).get('kind')); value=r.get('value') if isinstance(r,dict) else None
+        why=None if flag else 'no matching flag'
+        if not why and (flag.get('at'),flag.get('reason')) not in planned: why='flag is not in this preview'
+        if not why and not kind: why='not a topic/service/action name'
+        if not why and (r.get('resolution') not in ('traced','inferred') or not isinstance(value,str) or not re.fullmatch(r'~?/?[A-Za-z_]\w*(/[A-Za-z_]\w*)*',value)): why='agent left it unresolved' if r.get('resolution')=='unresolved' else 'agent value is not a single ROS name'
+        file=((flag or {}).get('at') or '').rsplit(':',1)[0]
+        entries=[e for e in plan['entries'] if e['package']==(flag or {}).get('package')] if not why else []
+        if (flag or {}).get('artifact'): entries=[e for e in entries if flag['artifact'] in (e.get('artifact'),e['name'])]
+        entries=[e for e in entries if any(p!='.' and (file.endswith(p) or p.endswith(file)) for p in e.get('sourcePaths',[]))] or (entries if len(entries)==1 else [])
+        if not why and len(entries)!=1: why='could not tell which node it belongs to'
+        if why: skipped.append({'at':(flag or {}).get('at'),'reason':why}); continue
+        entry=entries[0]; node=entry['node']; typ=r.get('type') if isinstance(r.get('type'),str) and re.fullmatch(r'[A-Za-z_]\w*/(msg/|srv/|action/)?\w+',r.get('type') or '') else None
+        mark={'resolution':r['resolution'],'citation':r.get('citation'),'note':r.get('note'),'at':flag.get('at'),'by':job.get('provider')}
+        # The extractor keeps a runtime-built name whose type is literal as an interface named
+        # with {expression} placeholders and says so in the flag reason ("Kept as '<name>'"):
+        # replace that interface's name instead of adding a duplicate.
+        kept=re.search(r"Kept as '([^']+)'",flag.get('reason') or '')
+        target=next((f for f in node['ifaces'] if f['kind']==kind and ((kept and f['name']==kept.group(1)) or (flag.get('at') and f.get('at')==flag.get('at')))),None)
+        if any(f is not target and f['kind']==kind and f['name'].lstrip('/')==value.lstrip('/') for f in node['ifaces']): skipped.append({'at':flag.get('at'),'reason':'node already has a '+kind+' named '+value}); continue
+        if target: target['name']=value; target['agentResolved']=mark; target['type']=target.get('type') or typ
+        else: node['ifaces'].append({'id':'agent_'+uid()[:20],'name':value,'kind':kind,'type':typ,'qos':None,'label':None,'exposed':True,'agentResolved':mark})
+        for f in entry.get('flags',[])+plan.get('flags',[]):
+            if f.get('at')==flag.get('at') and f.get('reason')==flag.get('reason'): f['agentResolution']={**mark,'value':value}
+        entry['interfaceKinds']=sorted({f['kind'] for f in node['ifaces']}); entry['messageTypes']=sorted({f['type'] for f in node['ifaces'] if f.get('type')})
+        applied.append({'package':entry['package'],'node':entry['name'],'kind':kind,'name':value,'type':target.get('type') if target else typ,'resolution':r['resolution']})
+    if applied:
+        version=digest([plan['version'],applied])[:24]
+        for e in plan['entries']: e['id']=e['id'].replace(':'+plan['version']+':',':'+version+':')
+        plan['version']=version
+    plan['agentApplied']={'jobId':job['jobId'],'applied':applied,'skipped':skipped}
+    atomic(path,encode(plan))
+    return {'ok':True,'applied':applied,'skipped':skipped,'version':plan['version']}
 
 def _session_token(storage_root, rotate=False):
     """Reuse the same session token across restarts instead of minting a new one every time.
@@ -164,6 +219,11 @@ class Handler(BaseHTTPRequestHandler):
         if sub=='tools/open' and method=='POST': return {'ok':True,**rt.open_tool(str(root),body)}
         if sub=='runtime': return {'ok':True,**rt.runtime_status(str(root))}
         if sub=='catalogue/resolve-flags' and method=='POST': return {'ok':True,**rt.submit_flag_resolution(str(root),body)}
+        if sub=='catalogue/apply-agent' and method=='POST':
+            job=rt.get_job(body.get('jobId'))
+            if Path(job.get('projectRoot','')).resolve()!=root.resolve(): fail('Job belongs to another project.','forbidden',403)
+            return apply_agent_resolutions(self.server.catalogue,pid,body.get('planId'),job)
+        if sub=='packages/suggest' and method=='POST': return {'ok':True,**rt.submit_package_suggestions(str(root),body)}
         if sub=='jobs' and method=='POST': return {'ok':True,**rt.submit_job(str(root),body)}
         if sub.startswith('jobs/'):
             job=sub.split('/')[1]

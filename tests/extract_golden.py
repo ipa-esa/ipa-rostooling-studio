@@ -29,7 +29,7 @@ machine. The fixture reproduces the SHAPES that mattered there instead: a C++ pa
 two executables that each name their node in `main()`, a Python `rclpy` package, and a launch
 file mixing project-local nodes with one that resolves against the vendored catalogue.
 Not covered, and worth knowing: `controllers.yaml` controller-instance resolution, `.msg`
-transcription (`--emit-msgs`), and `IncludeLaunchDescription` (which the extractor does not
+transcription (`--emit-msgs`) beyond check 6 below, and `IncludeLaunchDescription` (which the extractor does not
 follow at all).
 
 Two named checks on top of the diff
@@ -183,6 +183,31 @@ def check_bug_classes(out, add):
                 "completeness it has no basis for -- a plausible subset turns a visible "
                 "unknown into an invisible one." % want)
 
+    # 5. a Python name built at runtime with a literal type keeps the port under its literal
+    #    pieces ({...} marks each runtime value) AND stays flagged -- dropping it lost real ports.
+    path = os.path.join(out, "rosnodes", "probe_pilot.ros2")
+    text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+    if "'/probe/{self.get_name()}/heartbeat':" not in text:
+        add("RUNTIME PYTHON NAME: probe_pilot's ns + \"/heartbeat\" publisher (literal type Bool) "
+            "is missing; it must be kept as '/probe/{self.get_name()}/heartbeat'")
+    if "# FLAG publishers [" not in text:
+        add("RUNTIME PYTHON NAME: the kept heartbeat publisher must still carry a FLAG")
+
+
+def check_message_only_package(out, add):
+    """6. A message-only package (no node uses its types in the run) still gets its .ros with
+    --emit-msgs. Before, definitions were written only for types a node referenced, so linking
+    such a package produced no types at all."""
+    pkg, dest = os.path.join(SRC, "probe_msgs"), os.path.join(out, "msgs")
+    r = subprocess.run([sys.executable, os.path.join("scripts", "extract_ros2_interfaces.py"), pkg,
+                        "-o", dest, "--emit-msgs", dest, "--json", os.path.join(dest, "rec.json"),
+                        "--no-lint"], cwd=ROOT, capture_output=True, text=True)
+    path = os.path.join(dest, "probe_msgs.ros")
+    text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+    if r.returncode != 0 or "    Ping\n" not in text or "    Reset\n" not in text:
+        add("MESSAGE-ONLY PACKAGE: probe_msgs defines Ping.msg and Reset.srv and no node; "
+            "--emit-msgs must still write probe_msgs.ros with both (rc=%d)" % r.returncode)
+
 
 def _artifacts_of(path):
     """{artifact: {"node": name, "entries": [interface/parameter names]}} from a .ros2."""
@@ -264,6 +289,7 @@ def main(argv):
         if not update:
             check_bug_classes(out, add)
             check_artifact_attribution(out, add)
+            check_message_only_package(out, add)
     finally:
         shutil.rmtree(out, ignore_errors=True)
 

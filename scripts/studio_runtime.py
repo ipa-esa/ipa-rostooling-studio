@@ -61,9 +61,89 @@ AGENT_PROVIDERS = ("codex", "claude", "gemini", "antigravity")
 #     because every per-invocation way found to make it work here grants more than this feature
 #     needs or promises. If it is invoked here anyway (e.g. via a future change), the failure
 #     mode is a job that ends in "failed" with no parseable result (see
-#     _execute_flag_resolution) -- visible and retryable with a different provider, not a false
+#     _execute_agent_job) -- visible and retryable with a different provider, not a false
 #     "passed" with fabricated content.
 HEADLESS_AGENT_PROVIDERS = ("codex", "claude", "gemini")
+# Background agent jobs (own process group, marker-delimited JSON on stdout).
+AGENT_JOB_KINDS = ("resolve-flags", "package-suggestions")
+SUGGESTION_MARKERS = ("===SUGGESTIONS_JSON_START===", "===SUGGESTIONS_JSON_END===")
+# The example printed in the prompt between the markers. It is valid JSON, so the result scan
+# must skip it when a transcript echoes the prompt back.
+SUGGESTION_EXAMPLE = ('{"about": "...", "suggestions": [{"id": "...", "name": "...", "source": "workspace", '
+                      '"path": "/abs/path", "priority": "core", "fit": "...", "reason": "..."}], "notInList": ["..."]}')
+
+
+def _has_package_xml(path, depth=4):
+    """True if path or a folder at most `depth` levels below it holds a package.xml."""
+    level = [Path(path)]
+    for _ in range(depth + 1):
+        if any((d / "package.xml").is_file() for d in level):
+            return True
+        nxt = []
+        for d in level[:500]:
+            try:
+                nxt += [c for c in d.iterdir() if c.is_dir() and not c.name.startswith(".")]
+            except OSError:
+                pass
+        level = nxt
+    return False
+
+
+def validate_suggestions(doc, allowed_roots=None):
+    """Check an agent's package-suggestions document against the schema in
+    skills/ros-model/SKILL.md "Package discovery" and return the cleaned document. A suggestion
+    Studio cannot use is moved to notInList with the reason, rather than failing the whole run:
+    an unknown source (the skill says such entries are not shown), a workspace path that does
+    not exist, holds no package.xml (within 4 levels) or lies outside allowed_roots (the
+    project, workspace and vendor folders the user gave), or an online url that is not https
+    ("Use source" only fetches https). Nothing usable left is an error."""
+    def bad(why):
+        return RuntimeFailure("invalid_suggestions", "The agent's package list does not match the schema: " + why, 422)
+    if not isinstance(doc, dict) or not isinstance(doc.get("about"), str) or not isinstance(doc.get("suggestions"), list):
+        raise bad("needs an 'about' text and a 'suggestions' list.")
+    out, seen = [], set()
+    dropped = doc.get("notInList", [])
+    if not isinstance(dropped, list) or any(not isinstance(x, str) for x in dropped):
+        raise bad("'notInList' must be a list of text.")
+    dropped = list(dropped)
+    for s in doc["suggestions"]:
+        if not isinstance(s, dict) or any(not isinstance(s.get(k), str) or not s[k].strip() for k in ("id", "name", "priority", "fit", "reason")):
+            raise bad("every suggestion needs id, name, priority, fit and reason.")
+        if s.get("install") is not None and not isinstance(s["install"], str):
+            raise bad("'install' must be text.")
+        sid = re.sub(r"[^a-z0-9_]+", "_", s["id"].lower()).strip("_")[:48]
+        if not sid or sid in seen:
+            raise bad("ids must be unique: " + s["id"])
+        seen.add(sid)
+        if s.get("source") == "workspace":
+            if not isinstance(s.get("path"), str) or not Path(s["path"]).is_absolute():
+                raise bad(sid + " needs an absolute 'path'.")
+            where = Path(s["path"]).resolve()
+            why = ("which does not exist" if not where.is_dir() else
+                   "which is outside the project, workspace and vendor folders you gave" if allowed_roots is not None
+                   and not any(where.is_relative_to(Path(r).resolve()) for r in allowed_roots) else
+                   "which holds no package.xml" if not _has_package_xml(where) else None)
+            if why:
+                dropped.append(s["name"] + ": suggested at " + s["path"] + ", " + why + "; dropped by Studio.")
+                continue
+        elif s.get("source") == "online":
+            if not isinstance(s.get("url"), str) or not s["url"].strip():
+                raise bad(sid + " needs a 'url'.")
+            if not s["url"].startswith("https://"):
+                dropped.append(s["name"] + ": " + s["url"] + " is not an https URL, which is all Studio can fetch; dropped by Studio.")
+                continue
+        else:
+            dropped.append(s["name"] + ": unknown source " + json.dumps(s.get("source")) + " (must be 'workspace' or 'online'); dropped by Studio.")
+            continue
+        out.append({**s, "id": sid})
+    if not out:
+        raise bad("no usable suggestions.")
+    return {"about": doc["about"], "suggestions": out, **({"notInList": dropped} if dropped else {})}
+
+# What actually keeps each headless provider read-only, for a job record's "coverage" text.
+_READ_ONLY = {"codex": "in codex's read-only sandbox", "claude": "with read/search tools only, no MCP servers and no project settings or hooks",
+              "gemini": "with NO read-only enforcement (gemini runs with its defaults; it is only asked not to modify files)"}
+
 
 # Only antigravity's provider name (as configured in settings/the UI) differs from its actual
 # binary on PATH -- "antigravity" reads clearly in settings; `agy` is the real executable.
@@ -87,17 +167,32 @@ def _interactive_argv(executable, provider, prompt):
     return [executable, prompt]
 
 
-def _agent_exec_argv(executable, provider, prompt):
+def _agent_exec_argv(executable, provider, prompt, read_dirs=()):
     """Headless (non-interactive, no terminal) invocation for each HEADLESS_AGENT_PROVIDERS
     entry -- distinct from _interactive_argv, which launches an INTERACTIVE terminal session
     for a person to drive. codex/claude both ship a documented non-interactive mode (`codex
     exec`, `claude -p`); use it so a flag-resolution run can execute as a plain background job
     with progress polled from the UI, with nobody babysitting a terminal. Never called with a
-    provider outside HEADLESS_AGENT_PROVIDERS -- submit_flag_resolution gates on that set."""
+    provider outside HEADLESS_AGENT_PROVIDERS -- submit_flag_resolution gates on that set.
+
+    codex and claude are made read-only by flags, not just by asking: codex runs in its read-only
+    sandbox (--skip-git-repo-check: the source folder is often not a git checkout, and codex
+    otherwise refuses to start there at all); claude gets ONLY read/search tools (`--tools`
+    removes Write/Edit/Bash from the session entirely -- verified: asked to create a file and run
+    `touch`, it reported it had no tool to do either and nothing was created), no MCP servers
+    (--strict-mcp-config with no --mcp-config: otherwise the user's Gmail/Notion/... connectors
+    load too) and only the user's own settings (--setting-sources user: the working folder is
+    third-party source, whose .claude/settings.json hooks would otherwise run -- verified both
+    with a marker-file hook and a tool listing), and may read read_dirs outside its working
+    directory. gemini is passed through unchanged (not installed on the machine this was written
+    on, so no flag was verified for it): it is only ASKED to stay read-only -- see COVERAGE."""
     if provider == "codex":
-        return [executable, "exec", prompt]
+        return [executable, "exec", "--skip-git-repo-check", "--sandbox", "read-only", prompt]
     if provider == "claude":
-        return [executable, "-p", prompt]
+        tools = "Read,Grep,Glob,WebSearch"
+        return ([executable, "-p", prompt, "--tools", tools, "--allowedTools", tools, "--permission-mode", "dontAsk",
+                 "--strict-mcp-config", "--setting-sources", "user"]
+                + [x for d in read_dirs for x in ("--add-dir", str(d))])
     if provider == "gemini":
         return [executable, "-p", prompt]
     # Every HEADLESS_AGENT_PROVIDERS entry has an explicit branch above -- this should be
@@ -113,7 +208,7 @@ def _end_process_group(proc, grace=2):
     that spawn their own children; plain terminate()/kill() only signals the one process it's
     called on and leaves orphaned grandchildren running (found in review: cancelling or timing
     out a flag-resolution job left the real agent process still running). Only ever call this on
-    a process started with start_new_session=True (see _execute_flag_resolution) -- a process
+    a process started with start_new_session=True (see _execute_agent_job) -- a process
     that inherited THIS SERVER's own process group would take the server down with it."""
     try:
         pgid = os.getpgid(proc.pid)
@@ -798,10 +893,11 @@ class StudioRuntime:
         # missing or malformed file -- an agent that didn't follow instructions shouldn't crash
         # this read, it should just come back with no resolutions to show.
         if result.get("resultPath") and result.get("state") == "passed":
+            key = "suggestions" if result.get("kind") == "package-suggestions" else "resolutions"
             try:
-                result["resolutions"] = json.loads(Path(result["resultPath"]).read_text())
+                result[key] = json.loads(Path(result["resultPath"]).read_text())
             except (OSError, ValueError):
-                result["resolutions"] = None
+                result[key] = None
         return result
 
     def cancel_job(self, job_id):
@@ -822,13 +918,13 @@ class StudioRuntime:
             proc = self._processes.get(job_id)
             if proc and proc.poll() is None:
                 # A resolve-flags process was started with its own process group (see
-                # _execute_flag_resolution) specifically so this can kill its real children
+                # _execute_agent_job) specifically so this can kill its real children
                 # (codex/claude spawn their own) rather than orphaning them; a tutorial job's
                 # Docker process was NOT given its own group -- it inherits this server's, so
                 # killpg on it would take the server down too, and it's already been asked to
                 # stop cleanly above via `docker stop`, so a plain terminate() here is just a
                 # backstop for that process itself.
-                if record.get("kind") == "resolve-flags": _end_process_group(proc)
+                if record.get("kind") in AGENT_JOB_KINDS: _end_process_group(proc)
                 else: proc.terminate()
             record = self.get_job(job_id)
             record.pop("log", None)
@@ -885,21 +981,7 @@ class StudioRuntime:
             # line} -- there's no such Flag shape anywhere in this pipeline.
             if not isinstance(f, dict) or not isinstance(f.get("reason"), str):
                 raise RuntimeFailure("invalid_flags", "Each flag needs at least a reason.")
-        provider = request.get("provider", self.settings.get("agentProvider", "codex"))
-        if provider == "antigravity":
-            raise RuntimeFailure(
-                "unsupported_provider",
-                "Antigravity CLI is not available for this background check: its headless mode "
-                "auto-denies any tool call it cannot prompt for approval on, including reading "
-                "the very source files this check needs to read, unless it is run with a "
-                "blanket permission bypass this app does not enable on its own. Choose Codex, "
-                "Claude or Gemini here, or use \"Work with your coding CLI\" for an interactive "
-                "Antigravity session instead — there, you approve each tool call yourself.", 422)
-        if provider not in HEADLESS_AGENT_PROVIDERS:
-            raise RuntimeFailure("invalid_provider", "Choose Codex, Claude or Gemini.")
-        executable = shutil.which(_provider_executable(provider))
-        if not executable:
-            raise RuntimeFailure("missing_agent", provider + " is not installed — looked for '" + _provider_executable(provider) + "' on PATH.", 503)
+        provider, executable = self._headless_agent(request)
         skill = self.repo_root / "skills/ros-model/SKILL.md"
         ident = uuid.uuid4().hex
         job_root = self._jobs_root / ident
@@ -937,26 +1019,99 @@ class StudioRuntime:
                   "===RESOLUTION_JSON_START===",
                   '[{"index": <the number above>, "resolution": "traced"|"inferred"|"unresolved", '
                   '"value": <the resolved string, or null if unresolved>, '
+                  '"type": <for a topic/service/action flag, its full ROS type such as "sensor_msgs/msg/JointState", else null>, '
                   '"citation": "<file:line you traced it to, or the convention you cite>", '
                   '"note": "<one sentence explaining the resolution>"}, ...]',
                   "===RESOLUTION_JSON_END===", "",
+                  "If a name resolves to several values (e.g. one per arm), give the first as "
+                  "\"value\" and list the rest in \"note\".",
                   "Modify no file anywhere -- this task is read-only investigation; the array "
                   "you print is the entire deliverable. Cover every flag above, in order, by "
                   "index."]
         prompt = "\n".join(lines)
-        argv = _agent_exec_argv(executable, provider, prompt)
-        record = {"jobId": ident, "kind": "resolve-flags", "projectRoot": str(root), "state": "queued",
-                  "createdAt": time.time(), "provider": provider, "flagCount": len(flags),
+        argv = _agent_exec_argv(executable, provider, prompt, read_dirs=[self.repo_root])
+        record = {"jobId": ident, "kind": "resolve-flags", "projectRoot": str(root), "sourceRoot": resolved_source, "state": "queued",
+                  "createdAt": time.time(), "provider": provider, "flagCount": len(flags), "flags": flags,
                   "logPath": str(job_root / "output.log"), "resultPath": str(result_path),
                   "exitCode": None, "argv": argv,
-                  "coverage": "Real " + provider + " CLI run, instructed to only read the source "
-                              "tree and print its findings; nothing on disk is touched by it."}
+                  "coverage": "Real " + provider + " CLI run " + _READ_ONLY[provider] + ", instructed to only read "
+                              "the source tree and print its findings; Studio, not the agent, saves the result."}
         _write_json(job_root / "record.json", record)
-        thread = threading.Thread(target=self._execute_flag_resolution, args=(ident, source_root), daemon=True)
+        thread = threading.Thread(target=self._execute_agent_job, args=(ident, source_root), daemon=True)
         thread.start()
         return self.get_job(ident)
 
-    def _execute_flag_resolution(self, ident, source_root):
+    def submit_package_suggestions(self, project_root, request):
+        """Ask a coding agent, headlessly and read-only, which existing ROS packages fit this
+        project (skills/ros-model/SKILL.md "Package discovery"). The vendor question that section
+        says to ask first is asked by the UI and arrives here as request["vendor"]. The agent
+        prints the suggestions JSON between markers; _execute_agent_job validates it against
+        the schema and writes package-suggestions.json into the project itself."""
+        root = _root(project_root)
+        vendor = request.get("vendor") or []
+        if not isinstance(vendor, list) or len(vendor) > 10 or any(not isinstance(v, str) or not v.strip() or len(v) > 1000 or "\x00" in v for v in vendor):
+            raise RuntimeFailure("invalid_vendor", "Vendor packages must be up to 10 folder paths or URLs.")
+        vendor = [v.strip() for v in vendor]
+        folders = [v for v in vendor if not re.match(r"(https?://|git@)", v)]
+        for v in folders:
+            if not Path(v).is_absolute() or not Path(v).is_dir():
+                raise RuntimeFailure("invalid_vendor", "Vendor folder not found (use an absolute path): " + v, 422)
+        provider, executable = self._headless_agent(request)
+        manifest = root / "project.json"
+        studio = json.loads(manifest.read_text()).get("studio", {}) if manifest.is_file() else {}
+        brief = json.dumps({k: studio.get(k) for k in ("brief", "behavior", "criteria")}, indent=1, ensure_ascii=False)[:20000]
+        ident = uuid.uuid4().hex
+        job_root = self._jobs_root / ident
+        job_root.mkdir()
+        start, end = SUGGESTION_MARKERS
+        lines = ["# Suggest existing ROS packages for this project", "",
+                 "You are running NON-INTERACTIVELY inside CoreSense Studio. Nobody can answer a "
+                 "question. The vendor question has already been asked in the Studio UI; the "
+                 "answer is below.", "",
+                 "Follow the section \"Package discovery\" of " + str(self.repo_root / "skills/ros-model/SKILL.md")
+                 + " exactly, with two changes: do not ask the user anything, and do not write "
+                 "package-suggestions.json yourself -- print it (see the end).", "",
+                 "Popular packages list: " + str(self.repo_root / "references/popular-ros-packages.md"), "",
+                 "Project brief, behaviour steps and acceptance criteria (from project.json):", brief, "",
+                 "Vendor-specific packages the user gave: " + (", ".join(vendor) if vendor else
+                 "none (the user skipped the question)") + ".",
+                 "Search those vendor folders first (they may hold many packages: suggest each "
+                 "useful ROS package folder, i.e. one containing package.xml, or a folder that "
+                 "groups several), then the popular list, then optionally the web.", "",
+                 "Read-only task: modify no file anywhere. When done, print the complete JSON "
+                 "document between these exact marker lines, nothing else between them:",
+                 start, SUGGESTION_EXAMPLE, end]
+        argv = _agent_exec_argv(executable, provider, "\n".join(lines), read_dirs=[self.repo_root] + folders)
+        record = {"jobId": ident, "kind": "package-suggestions", "projectRoot": str(root), "state": "queued",
+                  "createdAt": time.time(), "provider": provider, "vendor": vendor, "timeout": 900,
+                  "allowedRoots": [str(root)] + folders + [self.settings[k] for k in ("workspaceRoot",) if self.settings.get(k)],
+                  "logPath": str(job_root / "output.log"), "resultPath": str(job_root / "suggestions.json"),
+                  "exitCode": None, "argv": argv,
+                  "coverage": "Real " + provider + " CLI run " + _READ_ONLY[provider] + "; Studio validates "
+                              "its JSON and writes package-suggestions.json itself."}
+        _write_json(job_root / "record.json", record)
+        threading.Thread(target=self._execute_agent_job, args=(ident, str(root)), daemon=True).start()
+        return self.get_job(ident)
+
+    def _headless_agent(self, request):
+        provider = request.get("provider", self.settings.get("agentProvider", "codex"))
+        if provider == "antigravity":
+            raise RuntimeFailure(
+                "unsupported_provider",
+                "Antigravity CLI is not available for this background check: its headless mode "
+                "auto-denies any tool call it cannot prompt for approval on, including reading "
+                "the very source files this check needs to read, unless it is run with a "
+                "blanket permission bypass this app does not enable on its own. Choose Codex, "
+                "Claude or Gemini here, or use \"Work with your coding CLI\" for an interactive "
+                "Antigravity session instead — there, you approve each tool call yourself.", 422)
+        if provider not in HEADLESS_AGENT_PROVIDERS:
+            raise RuntimeFailure("invalid_provider", "Choose Codex, Claude or Gemini.")
+        executable = shutil.which(_provider_executable(provider))
+        if not executable:
+            raise RuntimeFailure("missing_agent", provider + " is not installed — looked for '" + _provider_executable(provider) + "' on PATH.", 503)
+        return provider, executable
+
+    def _execute_agent_job(self, ident, source_root):
         path = self._jobs_root / ident / "record.json"
         with self._lock:
             record = json.loads(path.read_text())
@@ -982,7 +1137,7 @@ class StudioRuntime:
                                             shell=False, start_new_session=True)
                     self._processes[ident] = proc
                 try:
-                    code = proc.wait(timeout=600)
+                    code = proc.wait(timeout=record.get("timeout", 600))
                 except subprocess.TimeoutExpired:
                     _end_process_group(proc)
                     code, state = proc.poll(), "timed-out"
@@ -1003,17 +1158,31 @@ class StudioRuntime:
                     # otherwise latch the anchor onto prose and discard a perfectly good block
                     # sitting just above it. The echoed prompt block can never win this scan --
                     # its "<the number above>" placeholders are not valid JSON.
-                    start_marker, end_marker = "===RESOLUTION_JSON_START===", "===RESOLUTION_JSON_END==="
+                    suggest = record.get("kind") == "package-suggestions"
+                    start_marker, end_marker = SUGGESTION_MARKERS if suggest else ("===RESOLUTION_JSON_START===", "===RESOLUTION_JSON_END===")
                     start = output.rfind(start_marker)
                     while start != -1:
                         end = output.find(end_marker, start)
+                        text = output[start + len(start_marker):end].strip() if end != -1 else ""
                         try:
-                            block = json.loads(output[start + len(start_marker):end].strip()) if end != -1 else None
+                            # The prompt's own example (echoed in the transcript) is skipped, and
+                            # only the FIRST validation error -- from the agent's real, latest
+                            # block -- is kept, so an echoed example can't mask it.
+                            block = json.loads(text) if end != -1 and text != SUGGESTION_EXAMPLE else None
+                            if suggest and block is not None:
+                                block = validate_suggestions(block, record.get("allowedRoots"))
                         except ValueError:
                             block = None
-                        if isinstance(block, list):
+                        except RuntimeFailure as exc:
+                            block = None
+                            record.setdefault("error", exc.message)
+                        if isinstance(block, dict if suggest else list):
                             _write_json(Path(record["resultPath"]), block)
                             state = "passed" if code == 0 else "failed"
+                            if suggest and state == "passed":
+                                # Studio, not the agent, writes the project file (the agent is read-only).
+                                _write_json(Path(record["projectRoot"]) / "package-suggestions.json", block)
+                                record.pop("error", None)
                             break
                         start = output.rfind(start_marker, 0, start)
                 except (ValueError, OSError):

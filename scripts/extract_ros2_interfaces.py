@@ -138,6 +138,7 @@ class Flag:
         self.file = file
         self.line = line
         self.snippet = snippet
+        self.node = None                # NodeDraft whose declaration raised it, when known
 
     def as_comment(self, root):
         rel = os.path.relpath(self.file, root) if root else self.file
@@ -634,8 +635,10 @@ class PyFileVisitor(ast.NodeVisitor):
         self.imports = imports
         self.lines = snippet_lines
         self.class_stack = []
+        self.func_stack = []
         self.node_classes = {}     # class name -> node name (literal) or None
         self.calls = []            # (owner class or None, ast.Call)
+        self.call_funcs = {}       # id(ast.Call) -> enclosing function, for local names
 
     # -- structure
 
@@ -671,9 +674,32 @@ class PyFileVisitor(ast.NodeVisitor):
                 return None
         return None
 
+    def visit_FunctionDef(self, node):
+        self.func_stack.append(node)
+        self.generic_visit(node)
+        self.func_stack.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
     def visit_Call(self, node):
         self.calls.append((self.class_stack[-1] if self.class_stack else None, node))
+        if self.func_stack:
+            self.call_funcs[id(node)] = self.func_stack[-1]
         self.generic_visit(node)
+
+    def local_assigns(self, call):
+        """Local names the call's function assigns exactly once, as `x = <expr>`."""
+        func = self.call_funcs.get(id(call))
+        if func is None:
+            return {}
+        stores, simple = {}, {}
+        for sub in ast.walk(func):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                stores[sub.id] = stores.get(sub.id, 0) + 1
+            if (isinstance(sub, ast.Assign) and len(sub.targets) == 1
+                    and isinstance(sub.targets[0], ast.Name) and sub.lineno < call.lineno):
+                simple[sub.targets[0].id] = sub.value
+        return {k: v for k, v in simple.items() if stores.get(k) == 1}
 
     # -- snippets
 
@@ -723,11 +749,31 @@ def extract_python(pkg, path, resolver, report_root):
                 "literal (built at runtime); artifact falls back to the package name" % cls,
                 path, 1))
 
+    # `n = Node("demo_head")` / `self.host = Node("sim_bridge")` outside a Node subclass:
+    # calls made on that handle belong to that node, not to the package-named fallback.
+    handles = {}
+    for sub in ast.walk(tree):
+        if (isinstance(sub, ast.Assign) and len(sub.targets) == 1
+                and isinstance(sub.value, ast.Call) and sub.value.args):
+            fn = sub.value.func
+            if (fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)) in (
+                    "Node", "create_node"):
+                val = py_literal(sub.value.args[0])
+                if isinstance(val, str):
+                    handles[ast.unparse(sub.targets[0])] = val
+
     found_any = False
     for owner, call in visitor.calls:
-        target = _py_target(pkg, owner, named)
+        fn = call.func
+        handle = call.args[0] if (getattr(fn, "attr", getattr(fn, "id", None)) in PY_ACTION_CTOR
+                                  and call.args) else getattr(fn, "value", None)
+        name = handles.get(ast.unparse(handle)) if handle is not None else None
+        target = pkg.node_for(name, True) if name else _py_target(pkg, owner, named)
+        before = len(pkg.flags)
         if _handle_py_call(pkg, target, call, visitor, resolver, report_root, path):
             found_any = True
+        for flag in pkg.flags[before:]:
+            flag.node = target
     return found_any
 
 
@@ -805,6 +851,34 @@ def _py_qos(call, fname):
     return val if isinstance(val, int) and not isinstance(val, bool) else None
 
 
+def py_partial_name(node, assigns):
+    """A runtime-built name as its literal pieces plus {expression} placeholders, e.g.
+    ns + "/detections" with ns = f"/perception/{self.cam_name}" gives
+    '/perception/{self.cam_name}/detections'. A local assigned once is followed; nothing is
+    guessed. None when no literal piece is left to identify the name by."""
+    parts = []
+
+    def walk(n, depth):
+        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+            walk(n.left, depth)
+            walk(n.right, depth)
+        elif isinstance(n, ast.JoinedStr):
+            for value in n.values:
+                walk(value.value if isinstance(value, ast.FormattedValue) else value, depth)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            parts.append((True, n.value))
+        elif isinstance(n, ast.Name) and n.id in assigns and depth < 3:
+            walk(assigns[n.id], depth + 1)
+        else:
+            text = ast.unparse(n)
+            parts.append((False, "{%s}" % "".join(c for c in text if c not in "'\" \t{}")))
+
+    walk(node, 0)
+    if not any(literal and any(c.isalnum() for c in text) for literal, text in parts):
+        return None
+    return "".join(text for _, text in parts)
+
+
 def _record_interface(pkg, target, block, name_node, type_node, qos, visitor,
                       resolver, report_root, path, call):
     line = call.lineno
@@ -815,10 +889,18 @@ def _record_interface(pkg, target, block, name_node, type_node, qos, visitor,
         return False
     name = py_literal(name_node)
     if not isinstance(name, str):
-        pkg.flags.append(Flag(
-            block, "name is not a string literal (built at runtime -- parameter, "
-                   "f-string or variable); resolve by hand", path, line, snippet))
-        return False
+        reason = ("name is not a string literal (built at runtime -- parameter, "
+                  "f-string or variable); resolve by hand")
+        partial = py_partial_name(name_node, visitor.local_assigns(call))
+        ref = py_type_ref(type_node, visitor.imports) if partial else None
+        if ref is not None:
+            # The type is literal, so the port is real: keep it under the name's literal
+            # pieces, each runtime piece shown as {its source expression}. Still flagged.
+            reason += (". Kept as '%s' with its literal type %s; each {...} is a runtime "
+                       "value, not part of the real name" % (partial, ref))
+            target.add_interface(Interface(block, partial, ref, qos, path, line))
+        pkg.flags.append(Flag(block, reason, path, line, snippet))
+        return ref is not None
     ref = py_type_ref(type_node, visitor.imports)
     if ref is None:
         pkg.flags.append(Flag(
@@ -1355,6 +1437,7 @@ def _cpp_walk(pkg, path, src, tree, aliases, named, resolver, report_root, trees
         snippet = " ".join(ts_text(src, cur).split())[:140]
         owner = _cpp_enclosing_class(src, cur)
         target = _cpp_target(pkg, owner, named)
+        before = len(pkg.flags)
 
         if fname in CPP_METHOD_BLOCK and not ns:
             block = CPP_METHOD_BLOCK[fname]
@@ -1373,6 +1456,8 @@ def _cpp_walk(pkg, path, src, tree, aliases, named, resolver, report_root, trees
                 "parameter",
                 "declare_parameters() map form is not extracted deterministically; "
                 "read the map by hand", path, line, snippet))
+        for flag in pkg.flags[before:]:
+            flag.node = target
     return found
 
 
@@ -1611,6 +1696,16 @@ def artifact_name(node, targets):
         if hit:
             return sanitize_node_name(hit)
     return sanitize_node_name(node.name)
+
+
+def flag_artifact(flag, nodes, targets):
+    """The emitted artifact a flag belongs to: the node whose call raised it, else the one
+    node whose declarations come from the flag's file. None when that is not decidable. The
+    package-named fallback collects calls from unrelated files, so it needs the file match."""
+    owners = [n for n in nodes if os.path.abspath(flag.file) in {os.path.abspath(f) for f in n.files}]
+    if flag.node in nodes and (flag.node.confident or flag.node in owners):
+        return artifact_name(flag.node, targets)
+    return artifact_name(owners[0], targets) if len(owners) == 1 else None
 
 
 def emit_node(node, resolver, report_root, emit_qos, targets):
@@ -1942,12 +2037,29 @@ def main(argv=None):
                 "kind": f.kind, "reason": f.reason,
                 "at": "%s:%d" % (os.path.relpath(f.file, report_root), f.line),
                 "source": f.snippet,
+                "artifact": flag_artifact(f, nodes, pkg.targets),
             } for f in pkg.flags],
         })
+
+    # Every scanned package's own .msg/.srv/.action, used by a node in this run or not: a
+    # message-only package has no nodes, and its types were otherwise never written. A type the
+    # vendored catalogue already holds is listed, not redefined (resolve() prefers the catalogue).
+    scanned = {os.path.abspath(d) for d in pkg_dirs}
+    interface_pkgs = {}
+    for ref, path in sorted(resolver.local.items()):
+        pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(path)))
+        if pkg_dir in scanned:
+            entry = interface_pkgs.setdefault(ref.split("/", 1)[0], {
+                "path": os.path.relpath(pkg_dir, report_root), "defined": [], "catalogue": []})
+            entry["defined"].append(ref)
+            if ref in resolver.catalogue:
+                entry["catalogue"].append(ref)
 
     if args.emit_msgs:
         referenced = {i["type"] for r in record for n in r["nodes"]
                       for i in n["interfaces"] if i["resolution"] == "local"}
+        referenced |= {ref for e in interface_pkgs.values() for ref in e["defined"]
+                       if ref not in resolver.catalogue}
         msg_files, msg_flags = emit_companion_msgs(
             resolver, args.emit_msgs, report_root, referenced)
         written.extend(msg_files)
@@ -1964,6 +2076,9 @@ def main(argv=None):
     print("%d package(s) -> %d file(s) in %s" % (len(record), len(written), args.out))
     print("  %d interface(s), %d parameter(s) emitted; %d item(s) flagged for review"
           % (emitted, params, flagged))
+    for name, e in sorted(interface_pkgs.items()):
+        print("  %s defines %d type(s); %d already in the vendored catalogue (not redefined)"
+              % (name, len(e["defined"]), len(e["catalogue"])))
     if skipped_cpp:
         # Loud, and in the primary output rather than only on stderr: a caller who reads
         # just the summary must not mistake a degraded run for a complete one.
@@ -1974,7 +2089,8 @@ def main(argv=None):
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump({"packages": record}, fh, indent=2, sort_keys=True)
+            json.dump({"packages": record, "interface_packages": interface_pkgs}, fh,
+                      indent=2, sort_keys=True)
             fh.write("\n")
         print("  record: %s" % args.json_out)
 

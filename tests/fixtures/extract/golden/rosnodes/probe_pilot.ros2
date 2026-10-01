@@ -7,15 +7,21 @@
 # emitted. Everything the extractor could not read literally is listed
 # below as a FLAG for manual or LLM review -- it is NOT missing, it is
 # deliberately not guessed.
-# EXTRACTOR-FLAGS: 0
+# EXTRACTOR-FLAGS: 1
 #
-# (none -- every ROS call found in this package was literal.)
+# FLAG publishers [probe_pilot/probe_pilot/pilot.py:18]
+#   name is not a string literal (built at runtime -- parameter, f-string or variable); resolve
+#   by hand. Kept as '/probe/{self.get_name()}/heartbeat' with its literal type
+#   std_msgs/msg/Bool; each {...} is a runtime value, not part of the real name
+#   source: self.beat_pub = self.create_publisher(Bool, ns + "/heartbeat", 10)
 probe_pilot:
   artifacts:
     probe_pilot_node:
       node: probe_pilot
       publishers:
         '/probe/enable':
+          type: 'std_msgs/msg/Bool' # assets/roscommonobjects/basic_msgs/ros_core.ros
+        '/probe/{self.get_name()}/heartbeat':
           type: 'std_msgs/msg/Bool' # assets/roscommonobjects/basic_msgs/ros_core.ros
       subscribers:
         '/probe/status':

@@ -590,7 +590,7 @@ class StudioStore:
                     available,why=adapter.oracle_preflight()
                     if not available:
                         checks.append({'name':'Language server oracle','status':'not-run',
-                                       'diagnostics':[{'message':'The real language-server check did not run.','hint':why+' Install a JRE 11+ (or set ROSMODEL_JAVA to one) to enable it; the model generation gate and linter above already cover most issues without it.'}],
+                                       'diagnostics':[{'message':'The real language-server check did not run.','hint':why+' Install a Java 19+ runtime, 21 recommended (or set ROSMODEL_JAVA to one) to enable it; the model generation gate and linter above already cover most issues without it.'}],
                                        'tool':'ask_oracle'})
                     else:
                         ok,text,records=adapter.run_oracle(str(stage),paths)
