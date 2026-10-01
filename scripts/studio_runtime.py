@@ -1,6 +1,7 @@
 """Local host handoff and bounded ROS tutorial jobs. No provider API or SDK."""
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -186,11 +187,14 @@ def _agent_exec_argv(executable, provider, prompt, read_dirs=()):
     with a marker-file hook and a tool listing), and may read read_dirs outside its working
     directory. gemini is passed through unchanged (not installed on the machine this was written
     on, so no flag was verified for it): it is only ASKED to stay read-only -- see COVERAGE."""
+    # Both stream events as JSON lines (--json / stream-json) so the UI can show live activity
+    # (_activity_line); _transcript_text recovers the agent's own text for the marker scan.
     if provider == "codex":
-        return [executable, "exec", "--skip-git-repo-check", "--sandbox", "read-only", prompt]
+        return [executable, "exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt]
     if provider == "claude":
         tools = "Read,Grep,Glob,WebSearch"
-        return ([executable, "-p", prompt, "--tools", tools, "--allowedTools", tools, "--permission-mode", "dontAsk",
+        return ([executable, "-p", prompt, "--output-format", "stream-json", "--verbose",
+                 "--tools", tools, "--allowedTools", tools, "--permission-mode", "dontAsk",
                  "--strict-mcp-config", "--setting-sources", "user"]
                 + [x for d in read_dirs for x in ("--add-dir", str(d))])
     if provider == "gemini":
@@ -201,6 +205,127 @@ def _agent_exec_argv(executable, provider, prompt, read_dirs=()):
     # an interactive session, and the caller here has no terminal attached and no stdin to feed
     # one -- see the stdin=DEVNULL note where this is actually launched.
     raise RuntimeFailure("invalid_provider", provider + " has no headless invocation.")
+
+
+ACTIVITY_LINES, ACTIVITY_CHARS = 50, 200
+
+
+def _short_path(path, roots=()):
+    """A path relative to the first root holding it (prefixed by that root's name unless it is
+    the first, the agent's working folder), else ~ for home; long ones keep the tail."""
+    text = str(path)
+    for i, r in enumerate(roots):
+        try:
+            rel = Path(text).relative_to(r)
+            text = str(rel) if i == 0 and str(rel) != "." else str(Path(Path(r).name) / rel)
+            break
+        except (ValueError, TypeError):
+            continue
+    else:
+        home = str(Path.home())
+        if text.startswith(home + "/"):
+            text = "~" + text[len(home):]
+    return text if len(text) <= 70 else "…/" + "/".join(Path(text).parts[-3:])
+
+
+def _clean(text, limit=ACTIVITY_CHARS):
+    """Untrusted agent/repo text -> one printable line, capped."""
+    text = re.sub(r"\s+", " ", "".join(c if c.isprintable() or c.isspace() else " " for c in str(text))).strip()
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _tool_activity(name, args, roots):
+    a = args if isinstance(args, dict) else {}
+    where = lambda: _short_path(a.get("path") or a.get("file_path") or ".", roots)
+    if name == "Read":
+        return "Reading " + where()
+    if name == "Grep":
+        return "Searching for " + _clean(a.get("pattern", ""), 60) + " in " + where()
+    if name == "Glob":
+        return "Listing " + _clean(a.get("pattern", ""), 60) + " in " + where()
+    if name in ("WebSearch", "web_search"):
+        return "Web search: " + _clean(a.get("query", ""), 120)
+    if name == "WebFetch":
+        return "Fetching " + _clean(a.get("url", ""), 120)
+    first = next((v for v in a.values() if isinstance(v, str)), "")
+    return _clean(name, 40) + (" " + _clean(first, 120) if first else "")
+
+
+def _activity_line(raw, roots=()):
+    """One JSON event line from `claude -p --output-format stream-json --verbose` or `codex exec
+    --json` -> short human-readable activity lines (possibly none). Anything else -> none."""
+    try:
+        e = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(e, dict):
+        return []
+    t, out = e.get("type"), []
+    say = lambda text: out.append("Writing the final answer…" if any(m in text for m in (SUGGESTION_MARKERS[0], "===RESOLUTION_JSON_START===")) else "› " + _clean(text, 160))
+    if t == "system" and e.get("subtype") == "init":
+        out.append("Agent started" + (" (" + _clean(e.get("model"), 40) + ")" if e.get("model") else ""))
+    elif t == "assistant":  # claude
+        for b in (e.get("message") or {}).get("content") or []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                out.append(_tool_activity(b.get("name", "tool"), b.get("input"), roots))
+            elif b.get("type") == "text" and str(b.get("text", "")).strip():
+                say(b["text"])
+    elif t == "result":  # claude
+        out.append("Agent finished" + (" in %d s" % round(e["duration_ms"] / 1000) if isinstance(e.get("duration_ms"), (int, float)) else "")
+                   + ("" if e.get("subtype") in (None, "success") else " (" + _clean(e["subtype"], 40) + ")"))
+    elif t in ("item.started", "item.completed") and isinstance(e.get("item"), dict):  # codex
+        it, kind = e["item"], e["item"].get("type")
+        if t == "item.started" and kind == "command_execution":
+            out.append("Running " + _clean(it.get("command", ""), 140))
+        elif t == "item.started" and kind == "web_search":
+            out.append("Web search: " + _clean(it.get("query", ""), 120))
+        elif t == "item.started" and kind == "mcp_tool_call":
+            out.append(_clean(str(it.get("server", "")) + " " + str(it.get("tool", "")), 120))
+        elif t == "item.completed" and kind in ("agent_message", "reasoning") and str(it.get("text", "")).strip():
+            say(it["text"])
+    elif t in ("error", "turn.failed"):  # codex
+        out.append("Error: " + _clean(e.get("message") or (e.get("error") or {}).get("message", ""), 160))
+    return [_clean(x) for x in out if x]
+
+
+def _transcript_text(output):
+    """The agent's own words out of a JSON-lines event log (claude stream-json text blocks and
+    final result, codex agent_message items), for the marker scan; plain output is returned
+    as it is. If none of those hold a marker (an event shape this was not written against),
+    every string in the log that holds one is used instead, so a result is not lost."""
+    texts, marked, events = [], [], 0
+    def strings(v):
+        if isinstance(v, str):
+            if "===" in v and "_JSON_START===" in v:
+                marked.append(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                strings(x)
+        elif isinstance(v, list):
+            for x in v:
+                strings(x)
+    for raw in output.splitlines():
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(e, dict) or "type" not in e:
+            continue
+        events += 1
+        if e["type"] == "assistant":
+            texts += [b["text"] for b in (e.get("message") or {}).get("content") or [] if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
+        elif e["type"] == "result" and isinstance(e.get("result"), str):
+            texts.append(e["result"])
+        elif e["type"] == "item.completed" and isinstance(e.get("item"), dict) and e["item"].get("type") == "agent_message" and isinstance(e["item"].get("text"), str):
+            texts.append(e["item"]["text"])
+        elif e["type"] not in ("user", "system"):  # never the tool results / prompt the agent read
+            strings(e)
+    if not events:
+        return output
+    text = "\n".join(texts)
+    return text if "_JSON_START===" in text else "\n".join(texts + marked)
 
 
 def _end_process_group(proc, grace=2):
@@ -533,6 +658,7 @@ class StudioRuntime:
             settings = json.loads(self.settings_path.read_text())
         self.settings = validate_settings(settings or {})
         self._processes = {}
+        self._activity = {}  # live agent activity lines per running agent job (see _activity_line)
         self._lock = threading.RLock()
         self._jobs_root = self.storage_root / "jobs"
         self._handoffs_root = self.storage_root / "handoffs"
@@ -887,6 +1013,8 @@ class StudioRuntime:
                 result["log"] = f.read(65536).decode("utf-8", errors="replace")
         else:
             result["log"] = ""
+        if job_id in self._activity:
+            result["activity"] = list(self._activity[job_id])
         # resolve-flags jobs (see submit_flag_resolution) write their findings to resultPath as
         # a side effect of the agent run; surface them here once the job is done, the same place
         # the UI already polls for status, rather than adding a second endpoint. Tolerate a
@@ -1132,19 +1260,33 @@ class StudioRuntime:
                     # misinterprets its argv as an invitation to read from stdin (rather than
                     # erroring on an unrecognised invocation) should hit EOF immediately instead
                     # of blocking silently until the 600s timeout below.
-                    proc = subprocess.Popen(record["argv"], cwd=source_root, stdout=log,
+                    proc = subprocess.Popen(record["argv"], cwd=source_root, stdout=subprocess.PIPE,
                                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                             shell=False, start_new_session=True)
                     self._processes[ident] = proc
+                    activity = self._activity[ident] = collections.deque(maxlen=ACTIVITY_LINES)
+                # Read the output as it comes (copied to the log unchanged) so each JSON event
+                # becomes a live activity line for get_job; the timeout is a timer that ends the
+                # process group, which closes the pipe and ends this loop.
+                timed_out = threading.Event()
+                timer = threading.Timer(record.get("timeout", 600), lambda: (timed_out.set(), _end_process_group(proc)))
+                timer.daemon = True
+                timer.start()
+                roots = [source_root] + [r for r in record.get("allowedRoots", []) if r != source_root] + [str(self.repo_root)]
                 try:
-                    code = proc.wait(timeout=record.get("timeout", 600))
-                except subprocess.TimeoutExpired:
-                    _end_process_group(proc)
+                    for raw in proc.stdout:
+                        log.write(raw)
+                        log.flush()
+                        activity.extend(_activity_line(raw.decode("utf-8", errors="replace"), roots))
+                finally:
+                    timer.cancel()
+                code = proc.wait()
+                if timed_out.is_set():
                     code, state = proc.poll(), "timed-out"
             if state != "timed-out":
                 state = "failed"
                 try:
-                    output = Path(record["logPath"]).read_text(encoding="utf-8", errors="replace")
+                    output = _transcript_text(Path(record["logPath"]).read_text(encoding="utf-8", errors="replace"))
                     # The LAST marker pair, not the first: codex's own transcript echoes the
                     # prompt (which contains the marker text as instructions) near the start of
                     # the log, and an agent that drafts, catches a mistake and reprints a
@@ -1193,6 +1335,7 @@ class StudioRuntime:
             current = json.loads(path.read_text())
             if current["state"] in ("cancelled", "cancelling"):
                 state = "cancelled"
-            record.update(state=state, exitCode=code, finishedAt=time.time())
+            record.update(state=state, exitCode=code, finishedAt=time.time(), activity=list(self._activity.get(ident, ())))
             _write_json(path, record)
             self._processes.pop(ident, None)
+            self._activity.pop(ident, None)

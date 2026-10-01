@@ -144,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
             data=target.read_bytes(); self.send_response(200); self.send_header('Content-Type',mimetypes.guess_type(str(target))[0] or 'application/octet-stream'); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(data); return None
         if not secrets.compare_digest(self.headers.get('X-Studio-Token',''),self.server.token): fail('Studio session token required.','session',401)
         s=self.server.store; rt=self.server.runtime; body=self._body() if self.command in ['POST','PUT'] else {}; method=self.command
-        if path=='/api/bootstrap': return {'ok':True,'roots':{'storage':str(s.storage),'repository':str(s.repo)},'projects':s.recent(),'recentProjects':s.recent(),'capabilities':rt.capabilities() if rt else {},**s.catalogue()}
+        if path=='/api/bootstrap': return {'ok':True,'roots':{'storage':str(s.storage),'repository':str(s.repo),'home':str(Path.home())},'projects':s.recent(),'recentProjects':s.recent(),'capabilities':rt.capabilities() if rt else {},**s.catalogue()}
         if path=='/api/projects' and method=='POST': return s.create_project(body)
         if path=='/api/projects/open' and method=='POST': return s.open_project(body)
         if path=='/api/projects/source' and method=='POST': return s.open_source_workspace(body)

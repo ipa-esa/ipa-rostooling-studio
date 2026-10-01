@@ -130,6 +130,20 @@ with `--sandbox read-only` and `--skip-git-repo-check` (the scanned folder is of
 checkout, and Codex otherwise refuses to start). **Gemini is run unchanged: nothing enforces
 read-only there, it is only asked** (not verified here); the job's coverage text says so.
 
+**Live activity feed.** While "Find packages" or a "Pull & migrate" flag-resolution run is
+working, a small feed under its progress line shows what the agent is doing, newest at the bottom:
+"Reading Agibot/perception/…/detector.py", "Searching for create_publisher in …", "Web search: …",
+and short snippets of what the agent says. Claude Code runs with `--output-format stream-json
+--verbose` (on top of the read-only flags above) and Codex with `exec --json`; Studio reads the
+event lines as they arrive, copies them unchanged to the job's `output.log`, turns each into one
+short line (paths shortened against the scanned folder), keeps the last 50 on the job and returns
+them as `activity` in the normal job poll (`GET …/jobs/<id>`). The final JSON is taken from the
+agent's own text (the stream's final `result` and assistant text, or Codex `agent_message`
+items), never from file contents the agent read. Feed lines are untrusted text from the agent and
+the scanned repository: they are capped at 200 characters, stripped of control characters and
+shown as plain text only. The Codex event mapping follows its documented `--json` events and has
+not been checked against a live Codex run; Gemini shows no feed.
+
 Supported for the **interactive** handoff drawer — all four:
 
 | Provider | Binary | Interactive invocation |

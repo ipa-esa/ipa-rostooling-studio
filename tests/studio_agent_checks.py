@@ -8,6 +8,9 @@ shape a real run produced, or a fake "agent" that just prints, and asserts what 
                allowed folders -> moved to notInList with a reason, not a failed run.
   ECHO         the prompt's own example JSON, echoed in a transcript, never replaces the real
                validation error.
+  STREAM       a recorded-shape claude stream-json / codex --json event log: live activity lines
+               (tool + shortened path, assistant text, capped, control characters stripped) and
+               the final marker-delimited result still extracted, with the echoed example skipped.
   APPLY        apply-agent rejects another source folder, flags the plan never reported, and a
                value that collides with an existing port; it never renames by a word match.
   PLACEHOLDER  a {expr} interface name is a gate WARNING and a linter RM097 warning.
@@ -39,6 +42,61 @@ def argv_checks():
     check("--strict-mcp-config" in claude and "--mcp-config" not in claude
           and claude[claude.index("--setting-sources") + 1] == "user",
           "claude: no MCP servers, user settings only")
+    check(claude[claude.index("--output-format") + 1] == "stream-json" and "--verbose" in claude
+          and claude[claude.index("--tools") + 1] == "Read,Grep,Glob,WebSearch" and "--json" in codex,
+          "claude: stream-json events, still read/search tools only; codex: --json events")
+
+
+def stream_check(tmp):
+    """Synthetic event logs in the shape a real `claude -p --output-format stream-json --verbose`
+    run printed (system init, assistant tool_use/text, user tool_result, result) and the
+    documented `codex exec --json` item events. No real agent."""
+    vendor = tmp / "vendor_ws"
+    (vendor / "pkg_a").mkdir(parents=True)
+    (vendor / "pkg_a" / "package.xml").write_text("<package/>")
+    start, end = R.SUGGESTION_MARKERS
+    real = {"about": "a", "suggestions": [{"id": "pkg_a", "name": "pkg_a", "source": "workspace", "path": str(vendor / "pkg_a"),
+                                           "priority": "core", "fit": "f", "reason": "r"}]}
+    final = "Done.\n" + "\n".join([start, json.dumps(real), end]) + "\nThat is all."
+    tool = lambda name, args: {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": args}]}}
+    events = [{"type": "system", "subtype": "init", "model": "claude-x", "tools": ["Read"]},
+              tool("Read", {"file_path": str(vendor / "pkg_a" / "package.xml")}),
+              tool("Grep", {"pattern": "create_publisher", "path": str(tmp / "proj" / "perception")}),
+              tool("WebSearch", {"query": "ros2 grasp detection"}),
+              # A tool result quoting the prompt's example between markers must never be used.
+              {"type": "user", "message": {"content": [{"type": "tool_result", "content": "\n".join([start, R.SUGGESTION_EXAMPLE, end])}]}},
+              {"type": "assistant", "message": {"content": [{"type": "text", "text": "Echo:\n" + "\n".join([start, R.SUGGESTION_EXAMPLE, end])}]}},
+              {"type": "assistant", "message": {"content": [{"type": "text", "text": "<img src=x onerror=alert(1)>\x1b[31m " + "x" * 400}]}},
+              {"type": "assistant", "message": {"content": [{"type": "text", "text": final}]}},
+              {"type": "result", "subtype": "success", "duration_ms": 61234, "result": final}]
+    roots = [str(tmp / "proj"), str(vendor)]
+    lines = [x for e in events for x in R._activity_line(json.dumps(e), roots)]
+    check(lines[:4] == ["Agent started (claude-x)", "Reading vendor_ws/pkg_a/package.xml",
+                        "Searching for create_publisher in perception", "Web search: ros2 grasp detection"],
+          "stream: tool lines name the tool and a short path (%r)" % lines[:4])
+    check(lines[-1] == "Agent finished in 61 s" and lines[-2] == "Writing the final answer…"
+          and all(len(x) <= R.ACTIVITY_CHARS and "\x1b" not in x for x in lines)
+          and any(x.startswith("› <img") for x in lines), "stream: text capped, control chars stripped, kept as plain text")
+    check(R._activity_line("not json", roots) == [] and R._activity_line("[1]", roots) == [], "stream: non-event lines give no activity")
+    codex = [{"type": "item.started", "item": {"type": "command_execution", "command": "bash -lc 'rg create_publisher'"}},
+             {"type": "item.completed", "item": {"type": "agent_message", "text": final}}]
+    check([x for e in codex for x in R._activity_line(json.dumps(e))] == ["Running bash -lc 'rg create_publisher'", "Writing the final answer…"],
+          "stream: codex item events map to activity lines")
+    # Run the whole job against a fake agent that prints the claude events: result still applies.
+    rt = R.StudioRuntime(ROOT, tmp / "store2")
+    ident = "f" * 32
+    job = rt._jobs_root / ident
+    job.mkdir(parents=True)
+    script = "import sys\nfor l in %r: print(l, flush=True)" % [json.dumps(e) for e in events]
+    record = {"jobId": ident, "kind": "package-suggestions", "projectRoot": str(tmp), "state": "queued",
+              "argv": [sys.executable, "-c", script], "logPath": str(job / "output.log"),
+              "resultPath": str(job / "suggestions.json"), "allowedRoots": [str(tmp)]}
+    R._write_json(job / "record.json", record)
+    rt._execute_agent_job(ident, str(tmp))
+    done = rt.get_job(ident)
+    check(done["state"] == "passed" and [s["id"] for s in done["suggestions"]["suggestions"]] == ["pkg_a"]
+          and done["activity"][0] == "Agent started (claude-x)" and len(done["activity"]) == len(lines),
+          "stream: job passes with the real block and keeps its activity (%s, %r)" % (done["state"], done.get("error")))
 
 
 def suggestion_checks(tmp):
@@ -147,6 +205,7 @@ def main():
         argv_checks()
         suggestion_checks(tmp)
         echo_check(tmp)
+        stream_check(tmp)
         apply_checks(tmp)
         placeholder_checks()
     print("\n%d check(s) failed" % len(failures))
