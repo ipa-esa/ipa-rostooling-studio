@@ -313,7 +313,7 @@ standard one. `RM082`/`RM085`/`RM086` are ERROR because in those cases the packa
 known-complete in the catalogue, so a name that doesn't match it is a real defect, not a
 plausible gap — exactly the same reasoning `RM082`'s type-side counterpart already used.
 
-**Why this exists**: `examples/archive/turtlebot2_navigation.rossystem` originally referenced
+**Why this exists**: a TurtleBot 2 navigation example model (`turtlebot2_navigation.rossystem`, demo content kept outside this repository) originally referenced
 `nav2_amcl.amcl`, `nav2_bt_navigator.bt_navigator`, `nav2_planner.planner_server` and
 `nav2_controller.controller_server` — all invented from general Nav2 knowledge with a plausible
 but wrong `nav2_`-style package prefix (the real ones have no prefix at all: `amcl.amcl`,
@@ -632,7 +632,7 @@ the script appears in this README and vice versa, with no orphans in either dire
 > pass missed it — a same-`from:`/different-label pair, an unresolved `subSystems:` name, a
 > resolved-but-zero-interfaces target, and the bracket-list/dash-block `subSystems:` forms) plus a
 > full re-lint of every catalogued `.rossystem`, `tests/regenerated/mani-ur/system.rossystem`, and
-> `examples/turtlebot3_navigation.rossystem` — 0 new errors, 0 crashes, `--no-catalogue` confirmed
+> a TurtleBot 3 navigation example model (`turtlebot3_navigation.rossystem`, demo content kept outside this repository) — 0 new errors, 0 crashes, `--no-catalogue` confirmed
 > to suppress RM090-RM092 (RM093 is a pure grammar check and fires regardless).
 
 > *Amended 2026-09-03.* Two new rules, `RM095` and `RM096`, close gaps a live validation round

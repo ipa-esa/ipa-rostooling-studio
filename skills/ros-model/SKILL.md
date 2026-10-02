@@ -273,7 +273,7 @@ gazebo_sensor_b1_controller:
 
 ### 2a. Package, artifact and node are three distinct names — all three matter for launch generation
 
-Confirmed directly by the plugin maintainer (review of `examples/turtlebot3_navigation.rossystem`,
+Confirmed directly by the plugin maintainer (review of a TurtleBot 3 navigation example model (`turtlebot3_navigation.rossystem`, demo content kept outside this repository),
 2026-08-13), matching the same three-tier shape already established by rule 4b/`RosQNP.xtend`:
 
 ```yaml
@@ -390,7 +390,7 @@ it needs a derivation ladder rather than a guess. 32 of 52 corpus models omit `f
 
 Rung 2 means the launch file itself — a `*.launch.py` you found with `Glob` — not a `fromFile:`
 line you found in another model. Corpus models, `assets/rosmodelscatalog/*.rossystem`,
-`examples/`, and this plugin's own `tests/regenerated/` outputs are *models*; a path in one of
+example models, and this plugin's own `tests/regenerated/` outputs are *models*; a path in one of
 them is that author's claim, and in `tests/regenerated/` it is this skill's own earlier guess.
 Copying it launders a guess into a fact. A path that reached you any way other than rung 1 or
 rung 2 is rung 3: emit the sentinel, and mention in your report where you saw the candidate path
@@ -517,7 +517,7 @@ this is a real typo, not a plausible gap) enforce this at lint time and suggest 
 
 **Before emitting any `.rossystem` `from:` or arrow/parameter target**, resolve it the same way
 against `assets/node_index.json`. This is exactly the mistake that shipped in an earlier
-revision of `examples/archive/turtlebot2_navigation.rossystem`: `nav2_amcl.amcl`, `nav2_bt_navigator.
+revision of a TurtleBot 2 navigation example model (`turtlebot2_navigation.rossystem`, demo content kept outside this repository): `nav2_amcl.amcl`, `nav2_bt_navigator.
 bt_navigator`, `nav2_planner.planner_server` and `nav2_controller.controller_server` were all
 invented from general Nav2 knowledge with a plausible `nav2_`-style prefix — the real catalogue
 names are `amcl.amcl`, `bt_navigator.bt_navigator`, `planner_server.planner_server`,
