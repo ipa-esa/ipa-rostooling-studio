@@ -35,7 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rosmodel_lint import (  # noqa: E402
     ARROW_ALL, HAVE_YAML, is_mapping, is_scalar, is_sequence, mapping_items, mapping_keys,
-    mapping_get, normalise_bare_subsystems, yaml,
+    mapping_get, normalise_bare_subsystems, resolve_shared_node_roots, yaml,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -190,50 +190,76 @@ def extract_rossystem_system(root):
     return sys_key.value, nodes, has_own_subsystems, conns
 
 
-def main():
+def resolve_catalog_roots():
+    """Prefer shared ~/.rostooling/catalogue_repos (or ROSMODEL_CATALOGUE_DIR) when present,
+    falling back to assets/rosmodelscatalog/ when absent or empty."""
+    shared = resolve_shared_node_roots()
+    if shared:
+        return shared, shared[0]
+    return [CATALOG_ROOT], "assets/rosmodelscatalog/"
+
+
+def scan_node_roots(roots):
+    """Index .ros2 and .rossystem files across one or more roots; returns (nodes, systems)."""
     nodes = {}       # "pkg.node" -> {"file", "artifact", "interfaces"}
     systems = []      # [{"file": ...}] -- .rossystem retrieval references
+    visited_files = set()
 
-    for root_dir, _dirs, files in os.walk(CATALOG_ROOT):
-        for fname in sorted(files):
-            fpath = os.path.join(root_dir, fname)
-            rel = os.path.relpath(fpath, CATALOG_ROOT).replace(os.sep, "/")
-
-            if fname.endswith(".rossystem"):
-                if not HAVE_YAML:
-                    systems.append({"file": rel})
+    for root_base in roots:
+        if not os.path.isdir(root_base):
+            continue
+        for root_dir, dirs, files in os.walk(root_base):
+            dirs[:] = [d for d in sorted(dirs) if d not in (".git", "__pycache__", "node_modules")]
+            for fname in sorted(files):
+                fpath = os.path.join(root_dir, fname)
+                rp = os.path.realpath(fpath)
+                if rp in visited_files:
                     continue
+                visited_files.add(rp)
+                rel = os.path.relpath(fpath, root_base).replace(os.sep, "/")
+
+                if fname.endswith(".rossystem"):
+                    if not HAVE_YAML:
+                        systems.append({"file": rel})
+                        continue
+                    root = compose_yaml(fpath)
+                    sys_name, sys_nodes, has_own_sub, sys_conns = (
+                        (None, None, False, []) if root is None
+                        else extract_rossystem_system(root))
+                    entry = {"file": rel}
+                    if sys_name is not None:
+                        entry["system"] = sys_name
+                        entry["nodes"] = sys_nodes
+                        entry["hasOwnSubsystems"] = has_own_sub
+                        entry["connections"] = sys_conns
+                    systems.append(entry)
+                    continue
+                if not fname.endswith(".ros2"):
+                    continue
+                if not HAVE_YAML:
+                    continue
+
                 root = compose_yaml(fpath)
-                sys_name, sys_nodes, has_own_sub, sys_conns = (
-                    (None, None, False, []) if root is None
-                    else extract_rossystem_system(root))
-                entry = {"file": rel}
-                if sys_name is not None:
-                    entry["system"] = sys_name
-                    entry["nodes"] = sys_nodes
-                    entry["hasOwnSubsystems"] = has_own_sub
-                    entry["connections"] = sys_conns
-                systems.append(entry)
-                continue
-            if not fname.endswith(".ros2"):
-                continue
-            if not HAVE_YAML:
-                continue
+                if root is None:
+                    continue
 
-            root = compose_yaml(fpath)
-            if root is None:
-                continue
+                for pkg_name, artifact_name, node_name, interfaces in extract_ros2_nodes(root):
+                    key = "%s.%s" % (pkg_name, node_name)
+                    if key in nodes:
+                        continue  # first file wins; collisions are rare and not silently overwritten
+                    nodes[key] = {"file": rel, "artifact": artifact_name, "interfaces": interfaces}
 
-            for pkg_name, artifact_name, node_name, interfaces in extract_ros2_nodes(root):
-                key = "%s.%s" % (pkg_name, node_name)
-                if key in nodes:
-                    continue  # first file wins; collisions are rare and not silently overwritten
-                nodes[key] = {"file": rel, "artifact": artifact_name, "interfaces": interfaces}
+    return nodes, systems
+
+
+def main():
+    roots, source_label = resolve_catalog_roots()
+    nodes, systems = scan_node_roots(roots)
 
     payload = {
         "_meta": {
             "generated_by": "scripts/build_node_index.py",
-            "source": "assets/rosmodelscatalog/",
+            "source": source_label,
             "node_count": len(nodes),
             "system_count": len(systems),
         },

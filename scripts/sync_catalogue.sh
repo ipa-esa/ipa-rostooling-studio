@@ -19,8 +19,35 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-ROSCOMMONOBJECTS_SRC="${ROSCOMMONOBJECTS_SRC:-$PLUGIN_ROOT/../material/code/RosCommonObjects/de.fraunhofer.ipa.ros.communication.objects}"
-ROSMODELSCATALOG_SRC="${ROSMODELSCATALOG_SRC:-$PLUGIN_ROOT/../material/code/RosModelsCatalog}"
+SHARED_CAT_DIR="${ROSMODEL_CATALOGUE_DIR:-$HOME/.rostooling/catalogue_repos}"
+
+if [ -z "${ROSCOMMONOBJECTS_SRC:-}" ]; then
+    for cand in \
+        "$SHARED_CAT_DIR/ros_common_objects/de.fraunhofer.ipa.ros.communication.objects" \
+        "$SHARED_CAT_DIR/RosCommonObjects/de.fraunhofer.ipa.ros.communication.objects" \
+        "$SHARED_CAT_DIR/ros_common_objects" \
+        "$SHARED_CAT_DIR/RosCommonObjects" \
+        "$PLUGIN_ROOT/../material/code/RosCommonObjects/de.fraunhofer.ipa.ros.communication.objects"; do
+        if [ -d "$cand" ]; then
+            ROSCOMMONOBJECTS_SRC="$cand"
+            break
+        fi
+    done
+    ROSCOMMONOBJECTS_SRC="${ROSCOMMONOBJECTS_SRC:-$PLUGIN_ROOT/../material/code/RosCommonObjects/de.fraunhofer.ipa.ros.communication.objects}"
+fi
+
+if [ -z "${ROSMODELSCATALOG_SRC:-}" ]; then
+    for cand in \
+        "$SHARED_CAT_DIR/ros_models_catalog" \
+        "$SHARED_CAT_DIR/RosModelsCatalog" \
+        "$PLUGIN_ROOT/../material/code/RosModelsCatalog"; do
+        if [ -d "$cand" ]; then
+            ROSMODELSCATALOG_SRC="$cand"
+            break
+        fi
+    done
+    ROSMODELSCATALOG_SRC="${ROSMODELSCATALOG_SRC:-$PLUGIN_ROOT/../material/code/RosModelsCatalog}"
+fi
 
 TYPE_DEST="$PLUGIN_ROOT/assets/roscommonobjects"
 NODE_DEST="$PLUGIN_ROOT/assets/rosmodelscatalog"

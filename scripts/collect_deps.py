@@ -32,12 +32,24 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rosmodel_lint import Linter  # noqa: E402
+from rosmodel_lint import (  # noqa: E402
+    Linter,
+    resolve_shared_node_roots,
+    resolve_shared_type_roots,
+)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.path.dirname(SCRIPT_DIR)
 TYPE_CATALOG_ROOT = os.path.join(PLUGIN_ROOT, "assets", "roscommonobjects")
 NODE_CATALOG_ROOT = os.path.join(PLUGIN_ROOT, "assets", "rosmodelscatalog")
+
+
+def _resolve_catalog_file(rel, shared_roots, fallback_root):
+    for r in shared_roots:
+        cand = os.path.join(r, rel)
+        if os.path.isfile(cand):
+            return r, cand
+    return fallback_root, os.path.join(fallback_root, rel)
 
 
 def collect(model_paths, case_dir):
@@ -50,6 +62,9 @@ def collect(model_paths, case_dir):
     processed = set()
     worklist = list(model_paths)
     unparseable = []
+
+    shared_type_roots = resolve_shared_type_roots()
+    shared_node_roots = resolve_shared_node_roots()
 
     while worklist:
         path = worklist.pop()
@@ -69,11 +84,13 @@ def collect(model_paths, case_dir):
         for rel in linter.needed_type_files:
             if rel not in type_files:
                 type_files.add(rel)
-                worklist.append(os.path.join(TYPE_CATALOG_ROOT, rel))
+                _, resolved_path = _resolve_catalog_file(rel, shared_type_roots, TYPE_CATALOG_ROOT)
+                worklist.append(resolved_path)
         for rel in linter.needed_node_files:
             if rel not in node_files:
                 node_files.add(rel)
-                worklist.append(os.path.join(NODE_CATALOG_ROOT, rel))
+                _, resolved_path = _resolve_catalog_file(rel, shared_node_roots, NODE_CATALOG_ROOT)
+                worklist.append(resolved_path)
 
     os.makedirs(case_dir, exist_ok=True)
     # Snapshot what was already on disk BEFORE this run staged anything -- a project's own
@@ -122,11 +139,13 @@ def collect(model_paths, case_dir):
         copied.append((kind, rel, dst))
 
     for rel in sorted(type_files):
-        stage(TYPE_CATALOG_ROOT, rel, "type")
+        root_used, _ = _resolve_catalog_file(rel, shared_type_roots, TYPE_CATALOG_ROOT)
+        stage(root_used, rel, "type")
 
     for rel in sorted(node_files):
         kind = "system" if rel.endswith(".rossystem") else "node"
-        stage(NODE_CATALOG_ROOT, rel, kind)
+        root_used, _ = _resolve_catalog_file(rel, shared_node_roots, NODE_CATALOG_ROOT)
+        stage(root_used, rel, kind)
 
     return copied, unparseable
 

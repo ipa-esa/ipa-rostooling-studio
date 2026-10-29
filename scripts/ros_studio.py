@@ -2387,8 +2387,14 @@ def _catalogue_artifact_types(cat_file, artifact, cache):
     file is missing or won't compose (the caller then treats the type as unknown)."""
     if cat_file not in cache:
         by_art = {}
-        path = os.path.join(ASSETS, "rosmodelscatalog", cat_file or "")
-        if cat_file and os.path.isfile(path):
+        path = None
+        if cat_file:
+            for root_dir in list(L.resolve_shared_node_roots()) + [os.path.join(ASSETS, "rosmodelscatalog")]:
+                cand = os.path.join(root_dir, cat_file)
+                if os.path.isfile(cand):
+                    path = cand
+                    break
+        if path:
             idx, _ = parse_ros2(path)
             for (_pkg, _k), rec in idx.items():
                 m = by_art.setdefault(rec["artifact"], {})
@@ -3421,43 +3427,36 @@ def load_autocomplete():
     """The three offline datasets, degrading gracefully when a file is missing."""
     warnings = []
     types = []
+    type_files = {}
     tpath = os.path.join(ASSETS, "type_index.json")
-    if os.path.isfile(tpath):
+    td_types = L.load_type_index()
+    if td_types is not None:
+        types = sorted(td_types.keys())
+        for name, entry in td_types.items():
+            rel = (entry or {}).get("file")
+            if rel:
+                type_files[name] = rel
+    elif os.path.isfile(tpath):
         try:
             with open(tpath, encoding="utf-8") as h:
-                td = json.load(h)
-            types = sorted(k for k in td.get("types", {}).keys())
+                json.load(h)
         except Exception as exc:
             warnings.append("type_index.json unreadable: %s" % exc)
     else:
         warnings.append("assets/type_index.json missing — type autocomplete disabled")
 
-    # {type: relative .ros file} -- the same lookup _type_catalogue_file() does, embedded so
-    # the page can reproduce _type_comment()/_companion_types() byte-for-byte in its .ros2
-    # preview. Without it the preview would have to guess whether a type discloses a source
-    # file, and tests/studio_parity.js could not hold the two emitters to the same bytes.
-    type_files = {}
-    if os.path.isfile(tpath):
-        try:
-            with open(tpath, encoding="utf-8") as h:
-                td = json.load(h)
-            for name, entry in (td.get("types") or {}).items():
-                rel = (entry or {}).get("file")
-                if rel:
-                    type_files[name] = rel
-        except Exception:
-            pass          # already reported above; the preview degrades to "no comment"
-
     catalogue = {}
     packages = set()
     npath = os.path.join(ASSETS, "node_index.json")
-    if os.path.isfile(npath):
+    nd_nodes = L.load_node_index()
+    if nd_nodes is not None:
+        catalogue = nd_nodes
+        for key in catalogue:
+            packages.add(key.split(".")[0])
+    elif os.path.isfile(npath):
         try:
             with open(npath, encoding="utf-8") as h:
-                nd = json.load(h)
-            catalogue = nd.get("nodes", {})
-            for key in catalogue:
-                packages.add(key.split(".")[0])
+                json.load(h)
         except Exception as exc:
             warnings.append("node_index.json unreadable: %s" % exc)
     else:

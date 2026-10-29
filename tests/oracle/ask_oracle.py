@@ -233,7 +233,12 @@ class Server:
                 "--add-opens=java.base/java.lang=ALL-UNNAMED",
                 "--add-opens=java.base/java.util=ALL-UNNAMED",
             ]
-            cat_path = Path.home() / ".rostooling" / "catalogue_repos"
+            env_cat = os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+            cat_path = (
+                Path(env_cat).expanduser().resolve()
+                if env_cat
+                else (Path.home() / ".rostooling" / "catalogue_repos")
+            )
             if cat_path.exists():
                 cmd.append(f"-Drostooling.catalogue.path={cat_path}")
             cmd.extend(["-jar", str(self.jar)])
