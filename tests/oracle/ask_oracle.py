@@ -109,8 +109,8 @@ def preflight():
                        % (JAVA, major, JAVA_MIN_MAJOR, JAVA_MIN_MAJOR))
     if JAR_OVERRIDE:
         if not Path(JAR_OVERRIDE).exists():
-            return False, "ROSMODEL_JAR points at %s, which does not exist" % JAR_OVERRIDE
-        return True, "java %d, jar %s (ROSMODEL_JAR)" % (major, JAR_OVERRIDE)
+            return False, "Language server jar override points at %s, which does not exist" % JAR_OVERRIDE
+        return True, "java %d, jar %s (override)" % (major, JAR_OVERRIDE)
     if ORACLE_MODE == "legacy":
         for j in (JAR_LEGACY_ROS2, JAR_LEGACY_ROSSYSTEM):
             if not j.exists():
@@ -123,15 +123,61 @@ def preflight():
     return True, "java %d, jar %s" % (major, JAR_CURRENT.name)
 # ── language server jars ──────────────────────────────────────────────────────
 #
-# CURRENT (default). Built from ipa-esa/RosTooling @ esa/main (3.1.0-SNAPSHOT), commit
-# 5b7d897. Serves .ros, .ros2 and .rossystem from one process — its ISetup registry lists
-# Basics/Ros/Ros2/RosSystem plus the xbase setups. See rostooling-plugin/build/README.md.
-#
-# This replaced the two jars below as the oracle because the shipped 2024 jar predates the
-# Oct-2025 grammar: it cannot parse the QoS fields lease_duration/liveliness/lifespan/
-# deadline, which made those look like emission-profile violations when they are valid.
-JAR_CURRENT = PLUGIN / "build" / "ros2-ls" / "target" / \
-    "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar"
+# CURRENT (default). Automatically discovers the canonical RosTooling_Extension
+# bundled fat jar from installed extensions, settings, or sibling workspace repository.
+# Falls back to local build/ if neither is present.
+
+def _cli_jar_override() -> str:
+    for i, a in enumerate(sys.argv):
+        if a == "--jar" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1].strip()
+        if a.startswith("--jar="):
+            return a.split("=", 1)[1].strip()
+    return ""
+
+
+def _discover_current_jar() -> Path:
+    override = _cli_jar_override() or os.environ.get("ROSMODEL_JAR", "").strip()
+    if override:
+        return Path(override)
+
+    # 1. Studio persistent settings in ~/ros-studio/runtime-settings.json or ~/.rostooling/settings.json
+    for s_path in [Path.home() / "ros-studio" / "runtime-settings.json", Path.home() / ".rostooling" / "settings.json"]:
+        if s_path.exists():
+            try:
+                data = json.loads(s_path.read_text(encoding="utf-8"))
+                val = data.get("rosmodelJar")
+                if val and Path(val).exists():
+                    return Path(val)
+            except Exception:
+                pass
+
+    # 2. Installed VS Code / Antigravity / Cursor extensions (standard for production & agents)
+    for base in [
+        Path.home() / ".antigravity-ide" / "extensions",
+        Path.home() / ".vscode" / "extensions",
+        Path.home() / ".cursor" / "extensions",
+        Path.home() / ".vscode-server" / "extensions",
+        Path.home() / ".vscode-oss" / "extensions"
+    ]:
+        if base.exists():
+            jars = sorted(base.glob("**/server/rostooling_extension-*.jar"), reverse=True)
+            if jars:
+                return jars[0]
+
+    # 3. Sibling RosTooling_Extension repo (developer workspace fallback)
+    sibling_server = PLUGIN.parent / "RosTooling_Extension" / "rostooling-languages" / "server"
+    if sibling_server.exists():
+        jars = sorted(sibling_server.glob("rostooling_extension-*.jar"), reverse=True)
+        if jars:
+            return jars[0]
+
+    # 4. Local fallback build jar
+    return PLUGIN / "build" / "ros2-ls" / "target" / \
+        "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar"
+
+
+JAR_CURRENT = _discover_current_jar()
 
 # LEGACY, kept selectable for A/B comparison and as a fallback. Read-only reference clone.
 JAR_LEGACY_ROS2 = CODE / "vscode-RosTooling" / "resources" / \
@@ -146,9 +192,9 @@ JAR_LEGACY_ROSSYSTEM = PLUGIN / "build" / "rossystem-ls" / "target" / \
 #   current (default) | legacy   — 'legacy' restores the pre-rebuild behaviour exactly
 #                                  (old ros2 jar for .ros/.ros2, old rossystem jar for
 #                                  .rossystem), for A/B-ing a diagnostic.
-# ROSMODEL_JAR overrides with an explicit path and wins over ROSMODEL_ORACLE.
+# ROSMODEL_JAR or --jar overrides with an explicit path and wins over ROSMODEL_ORACLE.
 ORACLE_MODE = os.environ.get("ROSMODEL_ORACLE", "current").strip().lower()
-JAR_OVERRIDE = os.environ.get("ROSMODEL_JAR", "").strip()
+JAR_OVERRIDE = _cli_jar_override() or os.environ.get("ROSMODEL_JAR", "").strip()
 
 LAUNCHER = "org.eclipse.xtext.ide.server.ServerLauncher"
 
@@ -180,8 +226,22 @@ class Server:
         self.root = root
         self.verbose = verbose
         self.jar = jar or JAR_CURRENT
+
+        if "rostooling_extension" in self.jar.name:
+            cmd = [
+                str(JAVA),
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.util=ALL-UNNAMED",
+            ]
+            cat_path = Path.home() / ".rostooling" / "catalogue_repos"
+            if cat_path.exists():
+                cmd.append(f"-Drostooling.catalogue.path={cat_path}")
+            cmd.extend(["-jar", str(self.jar)])
+        else:
+            cmd = [str(JAVA), "-cp", str(self.jar), LAUNCHER]
+
         self.proc = subprocess.Popen(
-            [str(JAVA), "-cp", str(self.jar), LAUNCHER],
+            cmd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         self.inbox = queue.Queue()
@@ -308,7 +368,13 @@ def run_case(case_dir: Path, verbose=False):
             "processId": os.getpid(),
             "rootUri": uri_of(case_dir),
             "workspaceFolders": [{"uri": uri_of(case_dir), "name": case_dir.name}],
-            "capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": True}}},
+            "capabilities": {
+                "workspace": {
+                    "workspaceFolders": True,
+                    "executeCommand": {"dynamicRegistration": False}
+                },
+                "textDocument": {"publishDiagnostics": {"relatedInformation": True}}
+            },
         })
         init = srv.drain(45, until_result=True)
         if not any("result" in m for m in init if isinstance(m, dict)):
@@ -346,14 +412,13 @@ def run_case(case_dir: Path, verbose=False):
     return result
 
 
-def _results_path():
+def _results_path(is_partial_run=False):
     """Where to write the run's verdict.
 
-    Default is tests/oracle/results.json, but NOT when that file has uncommitted changes.
-    This script is the only writer of that path and it overwrites unconditionally, which
-    has silently destroyed a user's in-progress edits three separate times -- each writer
-    meaning no harm and each noticing only afterwards. Careful operators are not a control;
-    refusing to write over unsaved work is. Pass --results PATH to force a location.
+    Default is tests/oracle/results.json for full test runs (--all), but NOT when that
+    file has uncommitted changes or when running a subset of cases. A partial run writes
+    to results.local.json so it never accidentally truncates the 19-case regression baseline.
+    Pass --results PATH to force a specific location.
     """
     for i, a in enumerate(sys.argv):
         if a == "--results" and i + 1 < len(sys.argv):
@@ -362,6 +427,14 @@ def _results_path():
             return Path(a.split("=", 1)[1])
 
     default = HERE / "results.json"
+    if is_partial_run:
+        alt = default.with_name("results.local.json")
+        print(f"NOTE: Partial test run. Verdict written to {alt.name} to preserve the\n"
+              f"      checked-in regression baseline in {default.name}.\n"
+              f"      Pass --all to run all cases, or --results to override.",
+              file=sys.stderr)
+        return alt
+
     try:
         dirty = subprocess.run(
             ["git", "status", "--porcelain", "--", str(default)],
@@ -382,7 +455,20 @@ def _results_path():
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    args = []
+    skip_next = False
+    for a in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if a == "--jar":
+            skip_next = True
+            continue
+        if a.startswith("--jar="):
+            continue
+        if not a.startswith("-"):
+            args.append(a)
+
     verbose = "-v" in sys.argv or "--verbose" in sys.argv
 
     # One gate for both callers. `--preflight` answers "could the oracle run?" without running
@@ -396,7 +482,7 @@ def main():
         print("FATAL: " + reason, file=sys.stderr)
         return 2
     if JAR_OVERRIDE:
-        print(f"oracle ROSMODEL_JAR override -> {JAR_OVERRIDE}", file=sys.stderr)
+        print(f"oracle language server JAR override -> {JAR_OVERRIDE}", file=sys.stderr)
     elif ORACLE_MODE == "legacy":
         print("oracle mode: LEGACY (stale 2024 grammar — QoS fields will not parse)",
               file=sys.stderr)
@@ -432,7 +518,8 @@ def main():
             print(f"     ... {len(r['diagnostics']) - 14} more")
         print()
 
-    out = _results_path()
+    is_partial = not ("--all" in sys.argv or not args)
+    out = _results_path(is_partial_run=is_partial)
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"full results: {out}")
     return 0

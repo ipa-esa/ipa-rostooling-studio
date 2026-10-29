@@ -414,7 +414,7 @@ def _run(argv, timeout=8):
 def validate_settings(settings):
     if not isinstance(settings, dict):
         raise RuntimeFailure("settings_schema", "Settings must be an object.")
-    allowed = {"terminalArgv", "editorArgv", "agentProvider", "agentCwd", "workspaceRoot", "repositoryRoot"}
+    allowed = {"terminalArgv", "editorArgv", "agentProvider", "agentCwd", "workspaceRoot", "repositoryRoot", "rosmodelJar"}
     if set(settings) - allowed:
         raise RuntimeFailure("settings_schema", "Unknown tool settings.", details={"unknown": sorted(set(settings) - allowed)})
     out = dict(settings)
@@ -443,6 +443,11 @@ def validate_settings(settings):
             if not isinstance(out[key], str) or not Path(out[key]).is_absolute() or "\x00" in out[key]:
                 raise RuntimeFailure("settings_schema", key + " must be an absolute directory.")
             out[key] = str(_root(out[key]))
+    if "rosmodelJar" in out and out["rosmodelJar"] is not None:
+        if not isinstance(out["rosmodelJar"], str) or "\x00" in out["rosmodelJar"]:
+            raise RuntimeFailure("settings_schema", "rosmodelJar must be a path string.")
+        val = out["rosmodelJar"].strip()
+        out["rosmodelJar"] = str(Path(val).resolve()) if val else None
     return out
 
 
@@ -702,6 +707,42 @@ class StudioRuntime:
         found["terminal"] = {"available": bool(shutil.which(terminal[0])), "argv": terminal}
         found["editor"] = {"available": bool(editor and shutil.which(editor[0])), "argv": editor,
                            "guidance": "Configure your editor executable and {path}, or use the terminal."}
+
+        # RosTooling Language Server discovery (Override -> Extensions -> Sibling Repo)
+        ros_override = self.settings.get("rosmodelJar") or os.environ.get("ROSMODEL_JAR", "").strip()
+        active_jar = None
+        is_override = bool(ros_override)
+        if ros_override:
+            p = Path(ros_override)
+            if p.is_file():
+                active_jar = p
+
+        if not active_jar:
+            for base in [Path.home() / ".antigravity-ide" / "extensions", Path.home() / ".vscode" / "extensions", Path.home() / ".cursor" / "extensions"]:
+                if base.exists():
+                    jars = sorted(base.glob("**/server/rostooling_extension-*.jar"), reverse=True)
+                    if jars:
+                        active_jar = jars[0]
+                        break
+
+        if not active_jar:
+            sibling_server = self.repo_root.parent / "RosTooling_Extension" / "rostooling-languages" / "server"
+            if sibling_server.exists():
+                jars = sorted(sibling_server.glob("rostooling_extension-*.jar"), reverse=True)
+                if jars:
+                    active_jar = jars[0]
+
+        ver_ls = None
+        if active_jar:
+            m = re.search(r"rostooling_extension-([\d\.\-]+)\.jar", active_jar.name)
+            ver_ls = m.group(1) if m else active_jar.name
+
+        found["rosLanguageServer"] = {
+            "available": bool(active_jar and active_jar.is_file()),
+            "path": str(active_jar) if active_jar else None,
+            "isOverride": is_override,
+            "version": ver_ls
+        }
         return {"tools": found, "settings": self.settings, "storageRoot": str(self.storage_root),
                 "supportedJobs": ["tutorial-build", "tutorial-test"],
                 "agentMode": "installed-interactive-cli", "liveTopics": True, "physics": True,
