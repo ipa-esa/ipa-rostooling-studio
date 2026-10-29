@@ -397,7 +397,11 @@ def parse_msg_file(path, pkg, kind, flags):
             name, _, value = joined.partition("=")
             emitted = emit_ros_type(typ, pkg, path, lineno, flags)
             if emitted:
-                sections[current].append("%s %s=%s" % (emitted, name.strip(), value.strip()))
+                val = value.strip()
+                if typ in ("string", "wstring") and not (val.startswith(('"', "'")) and val.endswith(('"', "'"))):
+                    if any(c.isspace() for c in val) or not val.isidentifier():
+                        val = '"%s"' % val.replace('"', '\\"')
+                sections[current].append("%s %s=%s" % (emitted, name.strip(), val))
             continue
 
         # plain field; a third token is a per-field default, which .ros cannot express
