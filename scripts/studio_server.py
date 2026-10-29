@@ -117,7 +117,9 @@ class StudioServer(ThreadingHTTPServer):
             store.deployment=self.repositories
         from studio_catalogue import StudioCatalogue
         self.catalogue=StudioCatalogue(store,self.source,getattr(self,'repositories',None))
-        self.static=store.repo/'web/studio'; super().__init__(address,Handler)
+        default_static=Path(__file__).resolve().parent.parent/'web'/'studio'
+        self.static=(store.repo/'web'/'studio') if (store.repo/'web'/'studio').is_dir() else default_static
+        super().__init__(address,Handler)
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass

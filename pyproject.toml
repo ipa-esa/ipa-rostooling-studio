@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rostooling-studio"
+version = "0.2.0"
+description = "Deterministic RosTooling DSL model generation, AST extractors, static linter, and CoreSense Studio."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyYAML>=6.0",
+    "tree-sitter>=0.21.0",
+    "tree-sitter-cpp>=0.21.0",
+]
+
+[project.scripts]
+rosmodel-lint = "scripts.rosmodel_lint:main"
+ros-studio = "scripts.ros_studio:main"
+ros-plot = "scripts.ros_plot:main"
+extract-ros2-interfaces = "scripts.extract_ros2_interfaces:main"
+extract-rossystem = "scripts.extract_rossystem:main"
+coresense-studio = "scripts.studio_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+exclude = [
+    "**/__pycache__/**",
+    "**/node_modules/**",
+    "web/studio/frontend/**",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"assets/type_index.json" = "assets/type_index.json"
+"assets/node_index.json" = "assets/node_index.json"
+"web/studio/index.html" = "web/studio/index.html"
+"web/studio/styles.css" = "web/studio/styles.css"
+"web/studio/favicon.svg" = "web/studio/favicon.svg"
+"web/studio/app.js" = "web/studio/app.js"
+"web/studio/engineering.js" = "web/studio/engineering.js"
+"web/studio/evidence.js" = "web/studio/evidence.js"
+"web/studio/toolbox.js" = "web/studio/toolbox.js"
+"web/studio/tools.json" = "web/studio/tools.json"
+"web/studio/tutorial.js" = "web/studio/tutorial.js"
+"web/studio/tutorials.json" = "web/studio/tutorials.json"
+"web/studio/dist" = "web/studio/dist"

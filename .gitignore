@@ -9,6 +9,9 @@ build/**
 # Python
 __pycache__/
 *.pyc
+*.egg-info/
+.pytest_cache/
+/dist/
 
 # Demo content and IDE metadata -- not part of the reusable plugin
 examples/
