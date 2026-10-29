@@ -112,8 +112,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/extract_rossystem.py <launch-file> \
 
 `${CLAUDE_PLUGIN_ROOT}` is set when the plugin is installed; working inside the plugin repo it is
 not, and the paths are simply `scripts/extract_ros2_interfaces.py` and
-`scripts/extract_rossystem.py`. If the first invocation fails with "No such file or directory",
-that is which case you are in — it is not a reason to skip the step.
+`scripts/extract_rossystem.py` (or, after `pip install -e .`, the installed CLI entry points
+`extract-ros2-interfaces` and `extract-rossystem` alongside `rosmodel-lint`, `ros-studio`,
+`ros-plot`, and `coresense-studio`). If the first invocation fails with "No such file or
+directory", that is which case you are in — it is not a reason to skip the step.
 
 `scripts/README.md` documents what each reads and emits; it is the authority, so do not restate
 it from memory. The short version: everything that is literal in the source, already cited.
@@ -880,10 +882,14 @@ Run every line against the emitted file:
   `extract_ros2_interfaces.py` / `extract_rossystem.py` has already passed it once. Re-run it after
   your §8e edits — those are hand edits like any other.
 
-- **Static linter** (always available): `${CLAUDE_PLUGIN_ROOT}/scripts/rosmodel_lint.py`. Checks
-  everything above that is decidable in one file.
+- **Static linter** (always available): `${CLAUDE_PLUGIN_ROOT}/scripts/rosmodel_lint.py` (or
+  `rosmodel-lint` when installed via `pip install -e .`). Checks everything above that is decidable
+  in one file, consulting shared `~/.rostooling/catalogue_repos/` models (or
+  `ROSMODEL_CATALOGUE_DIR`) when synced and falling back to `assets/type_index.json` and
+  `assets/node_index.json`.
 
   ```
+  rosmodel-lint <file>...
   python scripts/rosmodel_lint.py <file>...
   ```
 
@@ -991,6 +997,29 @@ Run every line against the emitted file:
 
 - **When the linter and the oracle disagree, the oracle wins.** The linter is a reimplementation;
   the oracle is the toolchain. Report a file as validated only if you actually ran it.
+
+## Headless MCP Server & CLI Entry Points
+
+When the `rostooling-mcp` Model Context Protocol server (`rostooling-languages` binary
+`rostooling-mcp`, `--jar <path>` or `ROSMODEL_JAR` / `ROSMODEL_JAVA` / `ROSMODEL_CATALOGUE_DIR`)
+is connected, agents can validate models against the real Xtext Language Server and run ROS 2 code
+generation directly without opening VS Code:
+
+- **`validate_ros_model`** — validates syntax, cross-file `type:` / `from:` references, arrow
+  targets, and Xtext validator constraints on `.ros`, `.ros2`, or `.rossystem` files (use alongside
+  fast static `rosmodel-lint`).
+- **`generate_ros2_wrappers`** — generates C++ (`cpp`), Python (`python`), or Hybrid (`both`) ROS 2
+  node wrappers, runners, `CMakeLists.txt`, and starter domain logic templates from a `.ros2` model
+  into `src-gen/`.
+- **`generate_rossystem_code`** — generates ROS 2 launch/bringup packages (`<system>.launch.py`,
+  `ComposableNodeContainer` wiring, parameter YAMLs, and diagrams) from a `.rossystem` model into
+  `src-gen/`.
+- **`build_ros2_package`** — builds generated packages in the target ROS 2 workspace via
+  `colcon build`.
+
+Installing this repository with `pip install -e .` provides six CLI entry points on `PATH`:
+`rosmodel-lint`, `ros-plot`, `extract-ros2-interfaces`, `extract-rossystem`, `ros-studio`, and
+`coresense-studio`.
 
 Full detail on demand: `references/ros2-syntax.md`, `references/rossystem-syntax.md`,
 `references/worked-examples.md`.
