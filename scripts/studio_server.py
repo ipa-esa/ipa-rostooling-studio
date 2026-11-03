@@ -138,7 +138,9 @@ class Handler(BaseHTTPRequestHandler):
         host=self.headers.get('Host',''); allowed={'127.0.0.1:'+str(self.server.server_port),'localhost:'+str(self.server.server_port)}
         if host not in allowed: fail('Foreign host is not allowed.','origin',403)
         origin=self.headers.get('Origin')
-        if origin and origin not in {'http://'+h for h in allowed}: fail('Foreign origin is not allowed.','origin',403)
+        if origin and origin not in {'http://'+h for h in allowed} and not origin.startswith('vscode-webview://'): fail('Foreign origin is not allowed.','origin',403)
+        if path=='/api/health' and self.command=='GET':
+            return {'ok':True,'service':'rostooling-studio','port':self.server.server_port}
         if not path.startswith('/api/'):
             if self.command!='GET': fail('Not found.','not_found',404)
             rel=path.lstrip('/') or 'index.html'; target=(self.server.static/rel).resolve()
@@ -150,6 +152,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/projects' and method=='POST': return s.create_project(body)
         if path=='/api/projects/open' and method=='POST': return s.open_project(body)
         if path=='/api/projects/source' and method=='POST': return s.open_source_workspace(body)
+        if path=='/api/projects/lookup' and method=='GET': return s.find_project_for_file(query.get('filePath',[''])[0] or query.get('path',[''])[0])
         if path=='/api/tools': return {'ok':True,**(rt.capabilities() if rt else {})}
         if path=='/api/plugins':
             entries=json.loads((self.server.static/'tools.json').read_text())
@@ -199,6 +202,8 @@ class Handler(BaseHTTPRequestHandler):
         if sub=='session' and method=='PUT': return s.save_session(pid,body)
         if sub=='changes': return s.changes(pid,query.get('after',['0'])[0])
         if sub=='reconcile' and method=='POST': return s.reconcile(pid,body)
+        if sub=='reconcile-file' and method=='POST': return s.reconcile_file(pid,body)
+        if sub=='generate/models' and method=='POST': return s.materialize_models(pid,body)
         if sub=='artifacts': return s.artifacts(pid)
         if sub=='file': return s.read_file(pid,query.get('path',[''])[0])
         if sub=='generation/preview' and method=='POST': return s.preview_generation(pid,body)

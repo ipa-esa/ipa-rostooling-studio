@@ -4,7 +4,15 @@ from pathlib import Path
 import ros_studio as adapter
 
 MAX_BYTES = 8 * 1024 * 1024
-IGNORED = {'.git','.studio','.work','build','install','log','node_modules','__pycache__'}
+IGNORED = {'.git','.studio','.rostooling','.work','build','install','log','node_modules','__pycache__'}
+CORESENSE_ROLES = ('Sensing','Perception','World Modeling','Planning','Control','Actuation','Communication','Unassigned')
+LEGACY_ROLE_MAP = {
+    'Afferent': 'Sensing',
+    'Core': 'Planning',
+    'Efferent': 'Actuation',
+    'Meta': 'World Modeling',
+    'Supporting': 'Communication',
+}
 
 def uid(): return uuid.uuid4().hex
 
@@ -136,6 +144,8 @@ def schema(p):
         check(m,dict,'module')
         for k in ['role','unit']:
             if k in m: check(m[k],str,'module.'+k)
+        if m.get('role') in LEGACY_ROLE_MAP:
+            m['role']=LEGACY_ROLE_MAP[m['role']]
         check(m.get('sourcePaths',[]),list,'sourcePaths')
         for path in m.get('sourcePaths',[]):
             check(path,str,'source path')
@@ -262,9 +272,37 @@ class StudioStore:
         return read_json(root/'project.json')
     def _envelope(self,pid):
         root=self.root(pid); self._recover(root); s=self.state(root); p=self._project(root); schema(p)
-        return {'ok':True,'projectId':pid,'root':str(root),'revision':s['revision'],'project':p,'session':read_json(root/'.studio/layouts.json',{}),'modelState':s.get('modelState','draft'),'modelHashes':self._hashes(root,s.get('modelPaths',[])),'diagnostics':s.get('diagnostics',[]),'sequence':s.get('sequence',0),'sourceCoverage':self.observation_coverage.get(str(root),{'complete':True,'fileCount':len(s.get('observed',{})),'diagnostics':[]})}
+        return {'ok':True,'projectId':pid,'root':str(root),'promotedTargetDir':s.get('promotedTargetDir'),'promotedFiles':s.get('promotedFiles',[]),'revision':s['revision'],'project':p,'session':read_json(root/'.studio/layouts.json',{}),'modelState':s.get('modelState','draft'),'modelHashes':self._hashes(root,s.get('modelPaths',[])),'diagnostics':s.get('diagnostics',[]),'sequence':s.get('sequence',0),'sourceCoverage':self.observation_coverage.get(str(root),{'complete':True,'fileCount':len(s.get('observed',{})),'diagnostics':[]})}
     def recent(self):
-        with self.guard: return [{'projectId':k,**v} for k,v in self.registry.items()]
+        with self.guard:
+            out=[]
+            for k,v in self.registry.items():
+                entry={'projectId':k,**v}
+                try:
+                    st=self.state(Path(v['root']))
+                    if st.get('promotedTargetDir'): entry['promotedTargetDir']=st['promotedTargetDir']
+                except Exception:
+                    pass
+                out.append(entry)
+            return out
+    def find_project_for_file(self,file_path):
+        if not isinstance(file_path,str) or not file_path.strip(): return {'ok':True,'projectId':None}
+        target=Path(file_path).expanduser().resolve()
+        with self.guard: items=list(self.registry.items())
+        for pid,meta in items:
+            try:
+                root=Path(meta['root']).resolve()
+                if target.is_relative_to(root):
+                    return {'ok':True,'projectId':pid,'root':str(root)}
+                st=self.state(root)
+                pdir=st.get('promotedTargetDir')
+                if pdir and target.is_relative_to(Path(pdir).resolve()):
+                    return {'ok':True,'projectId':pid,'root':str(root),'promotedTargetDir':pdir}
+                if str(target) in (st.get('promotedFiles') or []):
+                    return {'ok':True,'projectId':pid,'root':str(root),'promotedTargetDir':pdir}
+            except Exception:
+                continue
+        return {'ok':True,'projectId':None}
     def _register(self,root,p):
         with self.guard:
             pid=p.get('studio',{}).get('projectId') or uid(); p.setdefault('studio',{})['projectId']=pid
@@ -282,7 +320,7 @@ class StudioStore:
         if request.get('mode')=='starter' or request.get('starterId'):
             for idx,(label,kind) in enumerate([('publisher','pub'),('subscriber','sub')]):
                 p['nodes'].append({'id':label,'label':label,'backing':'hand','pkg':'studio_demo','node':label,'artifact':label,'namespace':None,'x':60+idx*320,'y':80,'ifaces':[{'id':label+'_message','name':'message','kind':kind,'type':'std_msgs/msg/String','qos':None,'label':None,'exposed':True}],'params':[]})
-                p['studio']['modules'][label]={'role':'Afferent' if kind=='pub' else 'Core','unit':'development','sourcePaths':[],'portBindings':{label+'_message':'/studio/chatter'},'runtimeNode':'/'+label}
+                p['studio']['modules'][label]={'role':'Sensing' if kind=='pub' else 'Planning','unit':'development','sourcePaths':[],'portBindings':{label+'_message':'/studio/chatter'},'runtimeNode':'/'+label}
             p['connections']=[{'id':'message_flow','from':{'n':'publisher','i':'publisher_message'},'to':{'n':'subscriber','i':'subscriber_message'}}]
             p['packages']={'studio_demo':{}}
             p['studio']['tutorial']='ros-pubsub'
@@ -377,19 +415,13 @@ class StudioStore:
             notes.extend(self.deployment.source_coverage(str(root)).get('diagnostics',[]))
         self.observation_coverage[str(root)]={'complete':not notes,'fileCount':len(out),'diagnostics':notes[:100]}
         return out
-    def _parse(self,root,s,old):
-        paths=[safe_path(root,p) for p in s.get('modelPaths',[]) if p.endswith('.rossystem')]
-        if not paths: fail('No linked system model.','invalid_model',422)
-        p=adapter.seed_from_rossystem(str(paths[0])) if len(paths)==1 else adapter.seed_from_many([str(x) for x in paths])
-        schema(p)
-        errs,_,_,_=adapter.run_lint([str(safe_path(root,x)) for x in s.get('modelPaths',[])])
-        if errs: fail('External model linter found errors.','invalid_model',422,{'findings':[x.as_dict() for x in errs]})
-        diag=adapter.validate_project(p)
-        if diag['global'] or any(diag['byNode'].values()): fail('External model has unresolved or invalid content.','invalid_model',422,diag)
-        previous={(n['label'],n.get('pkg'),n.get('node')):n for n in old['nodes']}; remap={}; iface_map={}
+    def _merge_parsed(self,p,old):
+        previous={(n['label'],n.get('pkg'),n.get('node')):n for n in old['nodes']}
+        previous_by_label={n['label']:n for n in old['nodes']}
+        remap={}; iface_map={}
         for n in p['nodes']:
             original_id=n['id']
-            before=previous.get((n['label'],n.get('pkg'),n.get('node')))
+            before=previous.get((n['label'],n.get('pkg'),n.get('node'))) or previous_by_label.get(n['label'])
             if before:
                 remap[n['id']]=before['id']; n['id']=before['id']; n['x']=before.get('x',0); n['y']=before.get('y',0)
                 orig={(i['kind'],i['name']):i for i in before['ifaces']}
@@ -405,10 +437,176 @@ class StudioStore:
             c['id']=prior_connections.get(connection_key(c),'c_'+uid()[:12])
         p['studio']=copy.deepcopy(old.get('studio',{}))
         retained={n['id'] for n in p['nodes']}
+        for n in p['nodes']:
+            p['studio'].setdefault('modules',{}).setdefault(n['id'],{'role':'Unassigned','unit':'unassigned','sourcePaths':[]})
         for unit in p['studio'].get('deployment',{}).get('units',[]):
             missing=[n for n in unit.get('nodeIds',[]) if n not in retained]
             if missing: unit['orphanedNodeIds']=sorted(set(unit.get('orphanedNodeIds',[])+missing)); unit['nodeIds']=[n for n in unit.get('nodeIds',[]) if n in retained]
         return p
+    def _apply_layout_sidecars(self,p,rossystem_paths,roles_by_label=None):
+        layout_by_label={}
+        for sys_path in rossystem_paths:
+            base_name=Path(sys_path).name
+            cur=Path(sys_path).resolve().parent
+            candidates=[]
+            for _ in range(8):
+                candidates.append(cur/'.rostooling'/'layout'/(base_name+'.layout.json'))
+                if cur.parent==cur: break
+                cur=cur.parent
+            candidates.append(Path(str(sys_path)+'.layout.json'))
+            for cand in candidates:
+                if cand.is_file():
+                    try:
+                        data=json.loads(cand.read_text(encoding='utf8'))
+                        for sn in data.get('nodes') or []:
+                            lbl=sn.get('label')
+                            if isinstance(lbl,str) and lbl:
+                                layout_by_label[lbl]=sn
+                        break
+                    except Exception:
+                        pass
+        modules=p.setdefault('studio',{}).setdefault('modules',{})
+        for n in p.get('nodes',[]):
+            sn=layout_by_label.get(n['label'])
+            if sn:
+                if isinstance(sn.get('x'),(int,float)): n['x']=sn['x']
+                if isinstance(sn.get('y'),(int,float)): n['y']=sn['y']
+                if isinstance(sn.get('role'),str) and sn['role'] in CORESENSE_ROLES:
+                    modules.setdefault(n['id'],{'role':'Unassigned','unit':'unassigned','sourcePaths':[]})['role']=sn['role']
+            if isinstance(roles_by_label,dict) and n['label'] in roles_by_label:
+                role=roles_by_label[n['label']]
+                if isinstance(role,str) and role in CORESENSE_ROLES:
+                    modules.setdefault(n['id'],{'role':'Unassigned','unit':'unassigned','sourcePaths':[]})['role']=role
+    def _parse(self,root,s,old):
+        paths=[safe_path(root,p) for p in s.get('modelPaths',[]) if p.endswith('.rossystem')]
+        if not paths: fail('No linked system model.','invalid_model',422)
+        p=adapter.seed_from_rossystem(str(paths[0])) if len(paths)==1 else adapter.seed_from_many([str(x) for x in paths])
+        schema(p)
+        errs,_,_,_=adapter.run_lint([str(safe_path(root,x)) for x in s.get('modelPaths',[])])
+        if errs: fail('External model linter found errors.','invalid_model',422,{'findings':[x.as_dict() for x in errs]})
+        diag=adapter.validate_project(p)
+        if diag['global'] or any(diag['byNode'].values()): fail('External model has unresolved or invalid content.','invalid_model',422,diag)
+        p=self._merge_parsed(p,old)
+        self._apply_layout_sidecars(p,paths)
+        return p
+    def materialize_models(self,pid,request=None):
+        request=request or {}
+        with self.lock(pid):
+            root,s=self._fresh(pid)
+            if 'expectedRevision' in request and request['expectedRevision'] is not None:
+                self._expected(s,request)
+            p=read_json(root/'project.json')
+            d=adapter.validate_project(p)
+            if d['global'] or any(d['byNode'].values()): fail('Model needs corrections before generation.','invalid_model',422,d)
+            generated=adapter.generate_files(p)
+            project_files={'models/'+k:v.encode() for k,v in sorted(generated.items())}
+            # Stage & lint generated files before writing permanently
+            stage=safe_path(root,'.work/promote/'+uid()); stage.mkdir(parents=True)
+            stage_paths=[]
+            for name,content in sorted(generated.items()):
+                sp=safe_path(stage,name); atomic(sp,content.encode()); stage_paths.append(str(sp))
+            errs,warns,_,findings=adapter.run_lint(stage_paths)
+            if errs: fail('Generated model linter found errors.','invalid_model',422,{'findings':[x.as_dict() for x in errs]})
+            target_dir_raw=request.get('targetDir')
+            target_dir=Path(target_dir_raw).expanduser().resolve() if isinstance(target_dir_raw,str) and target_dir_raw.strip() else (root/'models').resolve()
+            target_dir.mkdir(parents=True,exist_ok=True)
+            written_files=[]
+            primary_system_name=(p.get('system',{}).get('name') or 'system')+'.rossystem'
+            primary_system_file=None
+            for name,content in sorted(generated.items()):
+                dest=target_dir/name
+                if dest.parent!=(root/'models').resolve():
+                    atomic(dest,content.encode())
+                written_files.append(str(dest))
+                if name==primary_system_name or (primary_system_file is None and name.endswith('.rossystem')):
+                    primary_system_file=str(dest)
+            ownership=read_json(root/'.studio/generation.json',{'hashes':{}})
+            ownership['hashes'].update({k:digest(v) for k,v in project_files.items()})
+            ownership['generator']='ros_studio.py formatVersion5'; ownership['appliedAt']=stamp()
+            commit_files={**project_files,'.studio/generation.json':encode(ownership)}
+            s['modelPaths']=sorted(project_files.keys())
+            s['baseModelHashes']={k:digest(v) for k,v in project_files.items()}
+            s['acceptedIdentity']=model_identity(p)
+            s['modelState']='clean'; s['diagnostics']=[]
+            if target_dir!=(root/'models').resolve():
+                s['promotedTargetDir']=str(target_dir)
+                s['promotedFiles']=written_files
+            self._commit(root,p,s,'Promoted models to workspace',commit_files)
+            modules=p.get('studio',{}).get('modules',{})
+            node_layouts=[{
+                'id':n['id'],
+                'label':n['label'],
+                'pkg':n.get('pkg',''),
+                'node':n.get('node',''),
+                'artifact':n.get('artifact') or n.get('node',''),
+                'x':n.get('x',80),
+                'y':n.get('y',80),
+                'role':(modules.get(n['id']) or {}).get('role','Unassigned'),
+            } for n in p.get('nodes',[])]
+            out=self._envelope(pid)
+            out.update({
+                'writtenFiles':written_files,
+                'projectModelFiles':[str(root/k) for k in sorted(project_files)],
+                'primarySystemFile':primary_system_file,
+                'targetDir':str(target_dir),
+                'nodeLayouts':node_layouts,
+                'warnings':[x.as_dict() for x in warns],
+            })
+            return out
+    def reconcile_file(self,pid,request=None):
+        request=request or {}
+        file_path_raw=request.get('filePath') or request.get('path')
+        roles_by_label=request.get('rolesByLabel') if isinstance(request.get('rolesByLabel'),dict) else None
+        with self.lock(pid):
+            root=self.root(pid); self._recover(root); s=self.state(root); old=self._project(root)
+            saved=None
+            if isinstance(file_path_raw,str) and file_path_raw.strip():
+                cand=Path(file_path_raw).expanduser()
+                saved=cand.resolve() if cand.is_absolute() else safe_path(root,file_path_raw)
+                if not saved.is_file(): fail('Saved model file does not exist.','not_found',404)
+            extra_files={}
+            if saved is None or saved.is_relative_to(root):
+                if saved is not None:
+                    tracked=set(s.get('modelPaths',[]))
+                    for sib in sorted(saved.parent.glob('*')):
+                        if sib.is_file() and sib.suffix in ['.rossystem','.ros2','.ros']:
+                            tracked.add(sib.relative_to(root).as_posix())
+                    s['modelPaths']=sorted(tracked)
+                rossystems=[safe_path(root,x) for x in s.get('modelPaths',[]) if x.endswith('.rossystem')]
+                p=self._parse(root,s,old)
+                if roles_by_label:
+                    self._apply_layout_sidecars(p,rossystems,roles_by_label)
+            else:
+                ext_dir=saved.parent
+                ext_models=sorted(x for x in ext_dir.glob('*') if x.is_file() and x.suffix in ['.rossystem','.ros2','.ros'])
+                rossystems=[x for x in ext_models if x.suffix=='.rossystem']
+                if not rossystems: fail('No .rossystem file found alongside '+saved.name,'invalid_model',422)
+                errs,_,_,_=adapter.run_lint([str(x) for x in ext_models])
+                if errs: fail('External model linter found errors.','invalid_model',422,{'findings':[x.as_dict() for x in errs]})
+                p=adapter.seed_from_rossystem(str(rossystems[0])) if len(rossystems)==1 else adapter.seed_from_many([str(x) for x in rossystems])
+                schema(p)
+                diag=adapter.validate_project(p)
+                if diag['global'] or any(diag['byNode'].values()): fail('External model has unresolved or invalid content.','invalid_model',422,diag)
+                p=self._merge_parsed(p,old)
+                self._apply_layout_sidecars(p,rossystems,roles_by_label)
+                for x in ext_models:
+                    extra_files['models/'+x.name]=x.read_bytes()
+                s['modelPaths']=sorted(extra_files.keys())
+                s['promotedTargetDir']=str(ext_dir)
+                s['promotedFiles']=[str(x) for x in ext_models]
+            schema(p)
+            p.setdefault('studio',{})['projectId']=pid
+            if extra_files:
+                s['baseModelHashes']={k:digest(v) for k,v in extra_files.items()}
+            else:
+                s['baseModelHashes']=self._hashes(root,s.get('modelPaths',[]))
+            s['acceptedIdentity']=model_identity(p)
+            s['modelState']='clean'; s['diagnostics']=[]; s.pop('externalProject',None)
+            s['sequence']=s.get('sequence',0)+1
+            self._commit(root,p,s,'Reconciled external model file'+(f' ({saved.name})' if saved else ''),extra_files or None)
+            out=self._envelope(pid)
+            out['reconciledFile']=str(saved) if saved else None
+            return out
     def _scan(self,pid):
         root=self.root(pid); self._recover(root); s=self.state(root)
         project_file=root/'project.json'; actual_hash=digest(project_file.read_bytes()) if project_file.exists() else None
