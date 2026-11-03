@@ -116,10 +116,16 @@ class StudioServer(ThreadingHTTPServer):
             # store.py needing to know this app dropped deployment/containers.
             store.deployment=self.repositories
         from studio_catalogue import StudioCatalogue
+        from studio_mcp import StudioMcpBridge
         self.catalogue=StudioCatalogue(store,self.source,getattr(self,'repositories',None))
+        self.mcp=StudioMcpBridge(store,store.repo)
         default_static=Path(__file__).resolve().parent.parent/'web'/'studio'
         self.static=(store.repo/'web'/'studio') if (store.repo/'web'/'studio').is_dir() else default_static
         super().__init__(address,Handler)
+    def server_close(self):
+        try: self.mcp.close()
+        except Exception: pass
+        super().server_close()
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
@@ -153,7 +159,8 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/projects/open' and method=='POST': return s.open_project(body)
         if path=='/api/projects/source' and method=='POST': return s.open_source_workspace(body)
         if path=='/api/projects/lookup' and method=='GET': return s.find_project_for_file(query.get('filePath',[''])[0] or query.get('path',[''])[0])
-        if path=='/api/tools': return {'ok':True,**(rt.capabilities() if rt else {})}
+        if path=='/api/mcp/status' and method=='GET': return self.server.mcp.status()
+        if path=='/api/tools': return {'ok':True,'mcp':self.server.mcp.status(),**(rt.capabilities() if rt else {})}
         if path=='/api/plugins':
             entries=json.loads((self.server.static/'tools.json').read_text())
             for manifest in (self.server.static/'plugins').glob('*/plugin.json'):
@@ -204,6 +211,10 @@ class Handler(BaseHTTPRequestHandler):
         if sub=='reconcile' and method=='POST': return s.reconcile(pid,body)
         if sub=='reconcile-file' and method=='POST': return s.reconcile_file(pid,body)
         if sub=='generate/models' and method=='POST': return s.materialize_models(pid,body)
+        if sub=='mcp/validate' and method=='POST': return self.server.mcp.validate_models(pid,body)
+        if sub=='mcp/generate-wrappers' and method=='POST': return self.server.mcp.generate_wrappers(pid,body)
+        if sub=='mcp/generate-system' and method=='POST': return self.server.mcp.generate_system(pid,body)
+        if sub=='mcp/build' and method=='POST': return self.server.mcp.build_workspace(pid,body)
         if sub=='artifacts': return s.artifacts(pid)
         if sub=='file': return s.read_file(pid,query.get('path',[''])[0])
         if sub=='generation/preview' and method=='POST': return s.preview_generation(pid,body)
