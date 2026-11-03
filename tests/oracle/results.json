@@ -1,7 +1,7 @@
 [
   {
     "case": "01-corpus-turtlesim",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -16,7 +16,7 @@
   },
   {
     "case": "02-corpus-csrsp",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -31,7 +31,7 @@
   },
   {
     "case": "03-ours-turtlesim",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -46,7 +46,7 @@
   },
   {
     "case": "04-neg-lease-duration",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -61,7 +61,7 @@
   },
   {
     "case": "05-neg-msgs-block",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -83,7 +83,7 @@
   },
   {
     "case": "06-neg-uppercase-pkg",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -105,26 +105,19 @@
   },
   {
     "case": "07-from-node-arrow-artifact",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "ros_core.ros",
       "minipkg.ros2",
       "minisys.rossystem"
     ],
-    "diagnostics": [
-      {
-        "file": "minisys.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      }
-    ],
+    "diagnostics": [],
     "status": "OK"
   },
   {
     "case": "08-neg-from-artifact",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "ros_core.ros",
@@ -137,25 +130,13 @@
         "line": 5,
         "severity": "ERROR",
         "message": "Couldn't resolve reference to Node 'minipkg.my_artifact'."
-      },
-      {
-        "file": "minisys.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      },
-      {
-        "file": "minisys.rossystem",
-        "line": 5,
-        "severity": "ERROR",
-        "message": "The feature 'from' of 'system.impl.RosNodeImpl@1b69ff03{file:///C:/Users/mae/ownCloud/Documents/2_Research/08_CoreSense/rostooling-plugin/tests/oracle/cases/08-neg-from-artifact/minisys.rossystem#//@components.0}' contains an unresolved proxy 'ros.impl.NodeImpl@d7ac435{file:///C:/Users/mae/ownCloud/Documents/2_Research/08_CoreSense/rostooling-plugin/tests/oracle/cases/08-neg-from-artifact/minisys.rossystem#|0}'"
       }
     ],
     "status": "OK"
   },
   {
     "case": "09-neg-arrow-node",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "ros_core.ros",
@@ -168,25 +149,13 @@
         "line": 7,
         "severity": "ERROR",
         "message": "Couldn't resolve reference to Publisher 'my_node::chatter'."
-      },
-      {
-        "file": "minisys.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      },
-      {
-        "file": "minisys.rossystem",
-        "line": 7,
-        "severity": "ERROR",
-        "message": "The feature 'from' of 'system.impl.RosPublisherReferenceImpl@5556ddfc{file:///C:/Users/mae/ownCloud/Documents/2_Research/08_CoreSense/rostooling-plugin/tests/oracle/cases/09-neg-arrow-node/minisys.rossystem#//@components.0/@rosinterfaces.0/@reference}' contains an unresolved proxy 'ros.impl.PublisherImpl@26e1e734{file:///C:/Users/mae/ownCloud/Documents/2_Research/08_CoreSense/rostooling-plugin/tests/oracle/cases/09-neg-arrow-node/minisys.rossystem#|1}'"
       }
     ],
     "status": "OK"
   },
   {
     "case": "10-ours-turtlesim-msgs",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -201,7 +170,7 @@
   },
   {
     "case": "11-ours-msg-vocabulary",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -216,7 +185,7 @@
   },
   {
     "case": "12-neg-bounded-array",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "bounded_msgs.ros",
       "builtin_interfaces.ros",
@@ -262,7 +231,7 @@
   },
   {
     "case": "13-probe-bool-True",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -277,7 +246,7 @@
   },
   {
     "case": "14-probe-qos-duration",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -299,7 +268,7 @@
   },
   {
     "case": "15-subsystems-fixture",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "actionlib_msgs.ros",
       "builtin_interfaces.ros",
@@ -319,25 +288,12 @@
       "fixture.rossystem",
       "turtlebot.rossystem"
     ],
-    "diagnostics": [
-      {
-        "file": "fixture.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      },
-      {
-        "file": "turtlebot.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      }
-    ],
+    "diagnostics": [],
     "status": "OK"
   },
   {
     "case": "16-subsystems-tf-ambiguity",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "actionlib_msgs.ros",
       "builtin_interfaces.ros",
@@ -360,22 +316,215 @@
     "diagnostics": [
       {
         "file": "probe.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
+        "line": 11,
+        "severity": "ERROR",
+        "message": "Couldn't resolve reference to RosInterface 'tf'."
+      }
+    ],
+    "status": "OK"
+  },
+  {
+    "case": "17-subsystems-multi",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "actionlib_msgs.ros",
+      "builtin_interfaces.ros",
+      "common_msgs.ros",
+      "diagnostic_msgs.ros",
+      "nav_msgs.ros",
+      "ros_core.ros",
+      "sensor_msgs.ros",
+      "shape_msgs.ros",
+      "tf2_msgs.ros",
+      "trajectory_msgs.ros",
+      "visualization_msgs.ros",
+      "extra_sink.ros2",
+      "hlds_laser_publisher.ros2",
+      "odom_sink.ros2",
+      "robot_state_publisher.ros2",
+      "turtlebot3_node.ros2",
+      "extra.rossystem",
+      "fixture.rossystem",
+      "turtlebot.rossystem"
+    ],
+    "diagnostics": [],
+    "status": "OK"
+  },
+  {
+    "case": "18-neg-subsystems-dash",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "actionlib_msgs.ros",
+      "builtin_interfaces.ros",
+      "common_msgs.ros",
+      "diagnostic_msgs.ros",
+      "nav_msgs.ros",
+      "ros_core.ros",
+      "sensor_msgs.ros",
+      "shape_msgs.ros",
+      "tf2_msgs.ros",
+      "trajectory_msgs.ros",
+      "visualization_msgs.ros",
+      "extra_sink.ros2",
+      "hlds_laser_publisher.ros2",
+      "odom_sink.ros2",
+      "robot_state_publisher.ros2",
+      "turtlebot3_node.ros2",
+      "extra.rossystem",
+      "fixture.rossystem",
+      "turtlebot.rossystem"
+    ],
+    "diagnostics": [
+      {
+        "file": "fixture.rossystem",
+        "line": 4,
+        "severity": "ERROR",
+        "message": "mismatched input '-' expecting RULE_END"
+      }
+    ],
+    "status": "OK"
+  },
+  {
+    "case": "19-neg-col0-comment",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "actionlib_msgs.ros",
+      "builtin_interfaces.ros",
+      "common_msgs.ros",
+      "diagnostic_msgs.ros",
+      "nav_msgs.ros",
+      "ros_core.ros",
+      "sensor_msgs.ros",
+      "shape_msgs.ros",
+      "tf2_msgs.ros",
+      "trajectory_msgs.ros",
+      "visualization_msgs.ros",
+      "extra_sink.ros2",
+      "hlds_laser_publisher.ros2",
+      "odom_sink.ros2",
+      "robot_state_publisher.ros2",
+      "turtlebot3_node.ros2",
+      "extra.rossystem",
+      "fixture.rossystem",
+      "turtlebot.rossystem"
+    ],
+    "diagnostics": [
+      {
+        "file": "fixture.rossystem",
+        "line": 7,
+        "severity": "ERROR",
+        "message": "missing EOF at ''"
+      }
+    ],
+    "status": "OK"
+  },
+  {
+    "case": "20-subsystems-label-collision",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "actionlib_msgs.ros",
+      "builtin_interfaces.ros",
+      "common_msgs.ros",
+      "diagnostic_msgs.ros",
+      "nav_msgs.ros",
+      "ros_core.ros",
+      "sensor_msgs.ros",
+      "shape_msgs.ros",
+      "tf2_msgs.ros",
+      "trajectory_msgs.ros",
+      "visualization_msgs.ros",
+      "hlds_laser_publisher.ros2",
+      "odom_sink.ros2",
+      "robot_state_publisher.ros2",
+      "turtlebot3_node.ros2",
+      "fixture.rossystem",
+      "turtlebot.rossystem"
+    ],
+    "diagnostics": [],
+    "status": "OK"
+  },
+  {
+    "case": "21-neg-liveliness",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "builtin_interfaces.ros",
+      "common_msgs.ros",
+      "ros_core.ros",
+      "std_srvs.ros",
+      "tf2_rosgraph.ros",
+      "turtlesim.ros",
+      "lprobe.ros2"
+    ],
+    "diagnostics": [
+      {
+        "file": "lprobe.ros2",
+        "line": 9,
+        "severity": "ERROR",
+        "message": "no viable alternative at input 'banana'"
       },
       {
-        "file": "turtlebot.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
+        "file": "lprobe.ros2",
+        "line": 10,
+        "severity": "ERROR",
+        "message": "extraneous input '' expecting EOF"
+      }
+    ],
+    "status": "OK"
+  },
+  {
+    "case": "22-parameters",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "builtin_interfaces.ros",
+      "ros_core.ros",
+      "param_pkg.ros2",
+      "param_probe.rossystem"
+    ],
+    "diagnostics": [],
+    "status": "OK"
+  },
+  {
+    "case": "23-subsystem-wired",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "actionlib_msgs.ros",
+      "builtin_interfaces.ros",
+      "common_msgs.ros",
+      "diagnostic_msgs.ros",
+      "nav_msgs.ros",
+      "ros_core.ros",
+      "sensor_msgs.ros",
+      "shape_msgs.ros",
+      "trajectory_msgs.ros",
+      "visualization_msgs.ros",
+      "app_pkg.ros2",
+      "wired_pkg.ros2",
+      "uses_wired.rossystem",
+      "wired_base.rossystem"
+    ],
+    "diagnostics": [],
+    "status": "OK"
+  },
+  {
+    "case": "24-neg-list-as-string",
+    "jar": "rostooling_extension-2.2.1.jar",
+    "files": [
+      "list_probe.ros2",
+      "list_probe.rossystem"
+    ],
+    "diagnostics": [
+      {
+        "file": "list_probe.rossystem",
+        "line": 7,
+        "severity": "ERROR",
+        "message": "Expect a list of elements; format { , , }"
       }
     ],
     "status": "OK"
   },
   {
     "case": "_deps",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "builtin_interfaces.ros",
       "common_msgs.ros",
@@ -389,7 +538,7 @@
   },
   {
     "case": "tb3-fresh",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "actionlib_msgs.ros",
       "builtin_interfaces.ros",
@@ -430,25 +579,12 @@
       "turtlebot.rossystem",
       "turtlebot3_guided_navigation.rossystem"
     ],
-    "diagnostics": [
-      {
-        "file": "turtlebot.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      },
-      {
-        "file": "turtlebot3_guided_navigation.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      }
-    ],
+    "diagnostics": [],
     "status": "OK"
   },
   {
     "case": "tb3-v4",
-    "jar": "de.fraunhofer.ipa.rostooling.ls-3.1.0-SNAPSHOT-ls.jar",
+    "jar": "rostooling_extension-2.2.1.jar",
     "files": [
       "actionlib_msgs.ros",
       "builtin_interfaces.ros",
@@ -480,16 +616,10 @@
     ],
     "diagnostics": [
       {
-        "file": "turtlebot.rossystem",
-        "line": 1,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
-      },
-      {
         "file": "turtlebot3_navigation.rossystem",
-        "line": 54,
-        "severity": "INFO",
-        "message": "The format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
+        "line": 135,
+        "severity": "ERROR",
+        "message": "Couldn't resolve reference to RosInterface 'tf'."
       }
     ],
     "status": "OK"

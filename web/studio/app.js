@@ -1,8 +1,9 @@
 'use strict';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)], esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=x=>JSON.parse(JSON.stringify(x));
-const hashParams=location.hash&&(location.hash.includes('&')||location.hash.includes('project=')||location.hash.includes('view='))?new URLSearchParams(location.hash.slice(1)):null;
-let token=(hashParams?hashParams.get('token'):location.hash.replace(/^#(?:token=)?/,''))||sessionStorage.getItem('studioToken')||'';
+const rawHash=(()=>{try{return location.hash?decodeURIComponent(location.hash.slice(1)):''}catch{return location.hash?location.hash.slice(1):''}})();
+const hashParams=rawHash&&(rawHash.includes('&')||rawHash.includes('project=')||rawHash.includes('view='))?new URLSearchParams(rawHash):null;
+let token=(hashParams?hashParams.get('token'):rawHash.replace(/^token=/,''))||sessionStorage.getItem('studioToken')||'';
 const deepLink=hashParams?{project:hashParams.get('project'),view:hashParams.get('view'),tab:hashParams.get('tab')}:null;
 if(token||deepLink){if(token)sessionStorage.setItem('studioToken',token);history.replaceState(null,'',location.pathname)}
 let clientId=sessionStorage.getItem('studioClientId');if(!clientId){clientId=crypto.randomUUID();sessionStorage.setItem('studioClientId',clientId)}
