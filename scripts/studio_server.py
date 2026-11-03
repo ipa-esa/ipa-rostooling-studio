@@ -185,7 +185,10 @@ class Handler(BaseHTTPRequestHandler):
             if sub=='catalogue/publish' and method=='POST': return catalogue.publish(pid,body)
             if sub=='catalogue/instantiate' and method=='POST': return catalogue.instantiate(pid,body)
             fail('Unsupported catalogue method.','method',405)
-        if sub=='source/inspect': return self.server.source.inspect(root)
+        if sub=='source/inspect':
+            scan_path = query.get('path', [''])[0]
+            scan_root = Path(scan_path).expanduser().resolve() if scan_path else root
+            return self.server.source.inspect(scan_root)
         if sub=='source/preview' and method=='POST': return self.server.source.preview(root,body)
         if sub=='source/import' and method=='POST':
             with s.lock(pid):
