@@ -90,10 +90,13 @@ _system_index_cache = {"token": None, "value": None}
 def get_shared_catalogue_dir():
     """Return the shared catalogue root directory.
 
-    Honours ROSMODEL_CATALOGUE_DIR when set; otherwise defaults to
-    ~/.rostooling/catalogue_repos (managed by RosCatalogueManager).
+    Honours ROSMODEL_CATALOGUE_DIR (or ROSTOOLING_CATALOGUE_DIR) when set;
+    otherwise defaults to ~/.rostooling/catalogue_repos (managed by RosCatalogueManager).
     """
-    env_dir = os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+    env_dir = (
+        os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+        or os.environ.get("ROSTOOLING_CATALOGUE_DIR", "").strip()
+    )
     if env_dir:
         return os.path.abspath(os.path.expanduser(env_dir))
     return os.path.expanduser("~/.rostooling/catalogue_repos")
@@ -318,7 +321,10 @@ def _shared_catalogue_fingerprint(cat_dir, type_roots, node_roots):
 
 def _load_shared_catalogue_overlay():
     """Return ('none', None) or (token, {'types': dict, 'nodes': dict, '_systems': list})."""
-    env_override = os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+    env_override = (
+        os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+        or os.environ.get("ROSTOOLING_CATALOGUE_DIR", "").strip()
+    )
     cat_dir = get_shared_catalogue_dir()
     type_roots = resolve_shared_type_roots(cat_dir)
     node_roots = resolve_shared_node_roots(cat_dir)

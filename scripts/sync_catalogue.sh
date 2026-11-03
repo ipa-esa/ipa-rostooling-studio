@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SHARED_CAT_DIR="${ROSMODEL_CATALOGUE_DIR:-$HOME/.rostooling/catalogue_repos}"
+SHARED_CAT_DIR="${ROSMODEL_CATALOGUE_DIR:-${ROSTOOLING_CATALOGUE_DIR:-$HOME/.rostooling/catalogue_repos}}"
 
 if [ -z "${ROSCOMMONOBJECTS_SRC:-}" ]; then
     for cand in \

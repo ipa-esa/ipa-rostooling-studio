@@ -233,7 +233,10 @@ class Server:
                 "--add-opens=java.base/java.lang=ALL-UNNAMED",
                 "--add-opens=java.base/java.util=ALL-UNNAMED",
             ]
-            env_cat = os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+            env_cat = (
+                os.environ.get("ROSMODEL_CATALOGUE_DIR", "").strip()
+                or os.environ.get("ROSTOOLING_CATALOGUE_DIR", "").strip()
+            )
             cat_path = (
                 Path(env_cat).expanduser().resolve()
                 if env_cat

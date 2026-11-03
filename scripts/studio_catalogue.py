@@ -5,10 +5,12 @@ executed here. StudioSource runs the existing static extractor scripts.
 """
 import copy
 import json
+import os
 from pathlib import Path
 import re
 import threading
 
+import rosmodel_lint as L
 from studio_store import StudioError, atomic, digest, encode, fail, safe_path, stamp, uid
 from studio_runtime import RuntimeFailure
 
@@ -19,6 +21,48 @@ class StudioCatalogue:
         self.directory = safe_path(store.storage, 'local-catalogue')
         self.directory.mkdir(parents=True, exist_ok=True)
         self.mutex = threading.RLock()
+
+    def _shared_catalogue_dir(self):
+        return Path(L.get_shared_catalogue_dir())
+
+    def _sync_published_to_shared_catalogue(self, group_id, files):
+        env_override = (
+            os.environ.get('ROSMODEL_CATALOGUE_DIR', '').strip()
+            or os.environ.get('ROSTOOLING_CATALOGUE_DIR', '').strip()
+        )
+        if not env_override and not str(self.store.storage).startswith(str(Path.home())):
+            return
+        cat_dir = self._shared_catalogue_dir()
+        try:
+            target_root = (cat_dir / 'studio_extracted').resolve()
+            group_dir = (target_root / group_id).resolve()
+            if not group_dir.is_relative_to(target_root):
+                return
+            group_dir.mkdir(parents=True, exist_ok=True)
+            for item in files or []:
+                fname = Path(item.get('path', '')).name
+                if fname.endswith(('.ros2', '.ros')) and not '/' in fname and not '\\' in fname:
+                    atomic(group_dir / fname, item['content'].encode('utf-8'))
+            cfg_path = cat_dir / 'catalogue_config.json'
+            cfg = {}
+            if cfg_path.is_file():
+                try:
+                    cfg = json.loads(cfg_path.read_text(encoding='utf-8')) or {}
+                except Exception:
+                    cfg = {}
+            custom = cfg.get('customFolders')
+            if not isinstance(custom, list):
+                custom = []
+            resolved_target = str(target_root)
+            if not any(
+                (isinstance(x, dict) and x.get('path') == resolved_target) or x == resolved_target
+                for x in custom
+            ):
+                custom.append({'name': 'studio_extracted', 'path': resolved_target})
+                cfg['customFolders'] = custom
+                atomic(cfg_path, encode(cfg))
+        except OSError:
+            pass
 
     def _selection(self, pid, repository_id):
         root = self.store.root(pid)
@@ -151,6 +195,7 @@ class StudioCatalogue:
             atomic(safe_path(self.directory, prefix + 'manifest.json'), encode(group))
             # Publishing this final pointer makes a complete immutable version visible.
             atomic(safe_path(self.directory, group['id'] + '/current.json'), encode({'version': group['version']}))
+            self._sync_published_to_shared_catalogue(group['id'], plan.get('files', []))
         return result
 
     def list(self, pid, request=None):
@@ -186,7 +231,8 @@ class StudioCatalogue:
         groups = [g for g in groups if g['entries']]
         entries = [{**e, 'repositoryName': g['repository']['name'], 'repositoryId': g['repository']['id'],
                     'groupId': g['id'], 'version': g['version']} for g in groups for e in g['entries']]
-        return {'ok': True, 'groups': groups, 'templates': entries, 'filters': {
+        return {'ok': True, 'sharedCatalogueDir': str(self._shared_catalogue_dir()),
+                'groups': groups, 'templates': entries, 'filters': {
                 'interfaceKinds': sorted({k for e in entries for k in e['interfaceKinds']}),
                 'messageTypes': sorted({t for e in entries for t in e['messageTypes']})}}
 

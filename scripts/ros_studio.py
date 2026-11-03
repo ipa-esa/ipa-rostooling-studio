@@ -917,12 +917,16 @@ def resolve_subsystem(ref, base_dir):
         # for the views has to come from the vendored file itself, because the index carries no
         # connections -- a missing or unreadable file just means no drill-in, never a failure.
         graph = None
-        cat_path = os.path.join(ASSETS, "rosmodelscatalog", entry.get("file") or "")
-        if entry.get("file") and os.path.isfile(cat_path):
-            try:
-                graph = _subsystem_graph(ros_plot.extract_model(cat_path, use_catalogue=False))
-            except Exception:
-                graph = None
+        rel_file = entry.get("file") or ""
+        if rel_file:
+            for root_dir in list(L.resolve_shared_node_roots()) + [os.path.join(ASSETS, "rosmodelscatalog")]:
+                cat_path = os.path.join(root_dir, rel_file)
+                if os.path.isfile(cat_path):
+                    try:
+                        graph = _subsystem_graph(ros_plot.extract_model(cat_path, use_catalogue=False))
+                    except Exception:
+                        graph = None
+                    break
         return entry.get("file"), entry.get("nodes") or {}, None, graph
 
     for cand in (ref, os.path.splitext(os.path.basename(ref))[0]):
