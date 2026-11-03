@@ -1,5 +1,5 @@
 """Durable local Studio workspace. Existing ros_studio owns the model language."""
-import copy, difflib, hashlib, json, math, os, re, shutil, threading, time, uuid
+import copy, difflib, hashlib, json, math, os, re, shutil, subprocess, sys, threading, time, uuid
 from pathlib import Path
 import ros_studio as adapter
 
@@ -360,6 +360,119 @@ class StudioStore:
                 shutil.rmtree(root/'.studio',ignore_errors=True)
             atomic(self.registry_file,encode(self.registry))
             return {'ok':True,'projectId':pid,'deleted':True}
+    def extract_packages(self, pid, request):
+        request = request or {}
+        packages = request.get('packages', [])
+        ws_root = request.get('workspaceRoot') or str(self.repo)
+        target_dir_str = request.get('targetDir')
+        with self.lock(pid):
+            root, s = self._fresh(pid)
+            p = read_json(root / 'project.json')
+            target_dir = Path(target_dir_str).expanduser().resolve() if target_dir_str else (Path(ws_root) / 'models' if ws_root else root / 'models')
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            script = self.repo / 'scripts' / 'extract_ros2_interfaces.py'
+            extracted_files = []
+            all_flags = []
+            diagnostics = []
+
+            pkg_paths = []
+            for pkg in packages:
+                raw_path = pkg.get('path') if isinstance(pkg, dict) else str(pkg)
+                if not raw_path:
+                    continue
+                cand = Path(raw_path)
+                if not cand.is_absolute() and ws_root:
+                    cand = (Path(ws_root) / cand).resolve()
+                if cand.is_dir():
+                    pkg_paths.append(str(cand))
+
+            if not pkg_paths:
+                fail('No valid package directories provided for extraction.', 'invalid_input', 400)
+
+            rec_file = target_dir / '.extraction_record.json'
+            args = [sys.executable, str(script)] + pkg_paths + ['-o', str(target_dir), '--emit-msgs', str(target_dir), '--json', str(rec_file)]
+            try:
+                proc = subprocess.run(args, capture_output=True, text=True, timeout=120)
+                if proc.stderr:
+                    diagnostics.append(proc.stderr.strip())
+            except subprocess.TimeoutExpired:
+                fail('Model extraction timed out.', 'timeout', 504)
+            except Exception as e:
+                fail(f'Model extraction failed: {str(e)}', 'extraction_failed', 500)
+
+            if rec_file.is_file():
+                try:
+                    rec = json.loads(rec_file.read_text(encoding='utf8'))
+                    for pkg_rec in rec.get('packages', []):
+                        for flag in pkg_rec.get('flags', []):
+                            all_flags.append({'package': pkg_rec.get('package'), **flag})
+                except Exception:
+                    pass
+
+            # If project currently only has the default starter pubsub demo, replace with real nodes
+            if p.get('studio', {}).get('tutorial') == 'ros-pubsub' or (len(p.get('nodes', [])) == 2 and list(p.get('packages', {}).keys()) == ['studio_demo']):
+                p['nodes'] = []
+                p['connections'] = []
+                p['packages'] = {}
+                p.get('studio', {}).pop('tutorial', None)
+
+            seen_nodes = set((n.get('pkg'), n.get('node')) for n in p.get('nodes', []))
+
+            for f in sorted(target_dir.glob('*.ros2')):
+                extracted_files.append(str(f))
+                try:
+                    parsed_nodes, _ = adapter.parse_ros2(str(f))
+                    for node_key, node_val in parsed_nodes.items():
+                        if not isinstance(node_val, dict):
+                            continue
+                        pkg_name = node_val.get('package')
+                        node_name = node_val.get('node')
+                        artifact = node_val.get('artifact') or node_name
+                        if (pkg_name, node_name) in seen_nodes:
+                            continue
+                        seen_nodes.add((pkg_name, node_name))
+                        idx = len(p.setdefault('nodes', []))
+                        node_id = f'node_{pkg_name}_{node_name}'
+                        new_node = {
+                            'id': node_id,
+                            'label': node_name,
+                            'backing': 'hand',
+                            'pkg': pkg_name,
+                            'node': node_name,
+                            'artifact': artifact,
+                            'namespace': None,
+                            'x': 60 + (idx % 3) * 320,
+                            'y': 80 + (idx // 3) * 220,
+                            'ifaces': [dict(iface, id=f'{node_id}_i{i}', exposed=True, label=None) for i, iface in enumerate(node_val.get('interfaces', []))],
+                            'params': [dict(pm, id=f'{node_id}_p{i}', exposed=False, label=None) for i, pm in enumerate(node_val.get('params', []))]
+                        }
+                        p['nodes'].append(new_node)
+                        if pkg_name:
+                            p.setdefault('packages', {})[pkg_name] = {'path': str(f.parent)}
+                except Exception as e:
+                    diagnostics.append(f'Could not parse {f.name}: {str(e)}')
+
+            for f in sorted(target_dir.glob('*.ros')):
+                try:
+                    parsed_types, _ = adapter.parse_ros(str(f))
+                    p.setdefault('types', {}).update(parsed_types)
+                except Exception:
+                    pass
+
+            p.setdefault('studio', {})['extractedPackages'] = [pkg.get('name') if isinstance(pkg, dict) else str(pkg) for pkg in packages]
+            p['studio']['flags'] = all_flags
+            self._commit(root, p, s, 'Extracted models from workspace packages')
+            env = self._envelope(pid)
+            return {
+                'ok': True,
+                'projectId': pid,
+                'envelope': env,
+                'extractedFiles': extracted_files,
+                'flagsCount': len(all_flags),
+                'flags': all_flags,
+                'diagnostics': diagnostics
+            }
     def open_source_workspace(self,request):
         if not isinstance(request.get('path'),str) or not request['path'].strip(): fail('Choose an explicit source workspace path.')
         root=Path(request.get('path','')).expanduser().resolve()

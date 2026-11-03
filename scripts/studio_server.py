@@ -189,6 +189,8 @@ class Handler(BaseHTTPRequestHandler):
             scan_path = query.get('path', [''])[0]
             scan_root = Path(scan_path).expanduser().resolve() if scan_path else root
             return self.server.source.inspect(scan_root)
+        if sub=='source/extract' and method=='POST':
+            with s.lock(pid): return s.extract_packages(pid,body)
         if sub=='source/preview' and method=='POST': return self.server.source.preview(root,body)
         if sub=='source/import' and method=='POST':
             with s.lock(pid):
