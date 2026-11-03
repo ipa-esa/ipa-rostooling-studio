@@ -1,5 +1,5 @@
 """Durable local Studio workspace. Existing ros_studio owns the model language."""
-import copy, difflib, hashlib, json, math, os, re, threading, time, uuid
+import copy, difflib, hashlib, json, math, os, re, shutil, threading, time, uuid
 from pathlib import Path
 import ros_studio as adapter
 
@@ -346,6 +346,20 @@ class StudioStore:
         return self.get_project(pid)
     def get_project(self,pid):
         with self.lock(pid): self._scan(pid); return self._envelope(pid)
+    def delete_project(self,pid,request=None):
+        request=request or {}
+        with self.guard:
+            if pid not in self.registry: fail('Project not found.','not_found',404)
+            entry=self.registry.pop(pid)
+            root=Path(entry['root']).resolve()
+            purge=request.get('purge',True)
+            storage_projects=(self.storage/'projects').resolve()
+            if purge and storage_projects in root.parents:
+                shutil.rmtree(root,ignore_errors=True)
+            elif purge and (root/'.studio').exists():
+                shutil.rmtree(root/'.studio',ignore_errors=True)
+            atomic(self.registry_file,encode(self.registry))
+            return {'ok':True,'projectId':pid,'deleted':True}
     def open_source_workspace(self,request):
         if not isinstance(request.get('path'),str) or not request['path'].strip(): fail('Choose an explicit source workspace path.')
         root=Path(request.get('path','')).expanduser().resolve()

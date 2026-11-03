@@ -153,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
             if not target.is_relative_to(self.server.static.resolve()) or not target.is_file(): fail('Page not found.','not_found',404)
             data=target.read_bytes(); self.send_response(200); self.send_header('Content-Type',mimetypes.guess_type(str(target))[0] or 'application/octet-stream'); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(data); return None
         if not secrets.compare_digest(self.headers.get('X-Studio-Token',''),self.server.token): fail('Studio session token required.','session',401)
-        s=self.server.store; rt=self.server.runtime; body=self._body() if self.command in ['POST','PUT'] else {}; method=self.command
+        s=self.server.store; rt=self.server.runtime; body=self._body() if self.command in ['POST','PUT','DELETE'] else {}; method=self.command
         if path=='/api/bootstrap': return {'ok':True,'roots':{'storage':str(s.storage),'repository':str(s.repo),'home':str(Path.home())},'projects':s.recent(),'recentProjects':s.recent(),'capabilities':rt.capabilities() if rt else {},**s.catalogue()}
         if path=='/api/projects' and method=='POST': return s.create_project(body)
         if path=='/api/projects/open' and method=='POST': return s.open_project(body)
@@ -206,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
         if not sub:
             if method=='GET': return s.get_project(pid)
             if method=='PUT': return s.save_project(pid,body)
+            if method=='DELETE': return s.delete_project(pid,body)
         if sub=='session' and method=='PUT': return s.save_session(pid,body)
         if sub=='changes': return s.changes(pid,query.get('after',['0'])[0])
         if sub=='reconcile' and method=='POST': return s.reconcile(pid,body)
@@ -266,6 +267,7 @@ class Handler(BaseHTTPRequestHandler):
     do_GET=_handle
     do_POST=_handle
     do_PUT=_handle
+    do_DELETE=_handle
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--port',type=int,default=8765); parser.add_argument('--storage-root',default=str(Path.home()/'ros-studio'),help='Where projects, cloned repositories and job output live. Defaults to ~/ros-studio; point it anywhere with real disk space.'); parser.add_argument('--rotate-token',action='store_true',help='Invalidate the previous session URL and issue a new one.'); args=parser.parse_args()
