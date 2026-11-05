@@ -344,8 +344,8 @@ class StudioStore:
             paths=[x.relative_to(root).as_posix() for x in root.glob('*') if x.suffix in ['.rossystem','.ros2','.ros'] and x.is_file()] if model else []
             self._commit(root,p,{'revision':0,'modelPaths':paths,'baseModelHashes':self._hashes(root,paths),'modelState':'clean' if model else 'draft','acceptedIdentity':model_identity(p) if model else None},'Opened project')
         return self.get_project(pid)
-    def get_project(self,pid):
-        with self.lock(pid): self._scan(pid); return self._envelope(pid)
+    def get_project(self,pid,workspace_root=None,models_dir=None):
+        with self.lock(pid): self._scan(pid,workspace_root=workspace_root,models_dir=models_dir); return self._envelope(pid)
     def delete_project(self,pid,request=None):
         request=request or {}
         with self.guard:
@@ -809,19 +809,64 @@ class StudioStore:
         if not all_parsed:
             return False
 
+        unique_recs = {}
+        packages_with_models = set()
+        for k, v in all_parsed.items():
+            if isinstance(v, dict) and 'package' in v and 'artifact' in v:
+                key = (v['package'], v['artifact'])
+                unique_recs[key] = v
+                packages_with_models.add(v['package'])
+
         nodes = p.setdefault('nodes', [])
+        existing_node_ids = {n['id'] for n in nodes if n.get('id')}
+        claimed_recs = set()
+        retained_nodes = []
+        removed_node_ids = set()
+
         for n in nodes:
             pkg = n.get('pkg')
             node_name = n.get('node')
-            key = (pkg, node_name)
-            parsed = all_parsed.get(key)
-            if not parsed:
-                continue
+            art_name = n.get('artifact')
+            lbl = n.get('label')
+
+            rec = None
+            rec_key = None
+            for candidate_key in [(pkg, art_name), (pkg, node_name), (pkg, lbl)]:
+                if candidate_key in unique_recs and candidate_key not in claimed_recs:
+                    rec = unique_recs[candidate_key]
+                    rec_key = candidate_key
+                    break
+            if not rec and pkg:
+                for k, cand_rec in unique_recs.items():
+                    if k not in claimed_recs and cand_rec.get('package') == pkg:
+                        if cand_rec.get('node') == lbl or cand_rec.get('artifact') == lbl:
+                            rec = cand_rec
+                            rec_key = k
+                            break
+
+            if not rec:
+                if pkg in packages_with_models:
+                    removed_node_ids.add(n['id'])
+                    updated = True
+                    continue
+                else:
+                    retained_nodes.append(n)
+                    continue
+
+            claimed_recs.add(rec_key)
+            retained_nodes.append(n)
+
+            if rec.get('artifact') and n.get('artifact') != rec['artifact']:
+                n['artifact'] = rec['artifact']
+                updated = True
+            if rec.get('node') and n.get('node') != rec['node']:
+                n['node'] = rec['node']
+                updated = True
 
             existing_ifaces = {(i.get('kind'), i.get('name')): i for i in n.get('ifaces', [])}
             used_iface_ids = {i.get('id') for i in n.get('ifaces', []) if i.get('id')}
             new_ifaces = []
-            for parsed_iface in parsed.get('interfaces', []):
+            for parsed_iface in rec.get('interfaces', []):
                 ikey = (parsed_iface.get('kind'), parsed_iface.get('name'))
                 if ikey in existing_ifaces:
                     merged = dict(existing_ifaces[ikey])
@@ -835,15 +880,15 @@ class StudioStore:
                         counter += 1
                         new_id = f"{n['id']}_i{counter}"
                     used_iface_ids.add(new_id)
-                    new_ifaces.append({**parsed_iface, 'id': new_id, 'exposed': True, 'label': None})
-            if [i.get('name') for i in new_ifaces] != [i.get('name') for i in n.get('ifaces', [])]:
+                    new_ifaces.append({**parsed_iface, 'id': new_id, 'exposed': True, 'label': parsed_iface.get('name')})
+            if new_ifaces != n.get('ifaces', []):
                 n['ifaces'] = new_ifaces
                 updated = True
 
             existing_params = {pm.get('name'): pm for pm in n.get('params', [])}
             used_param_ids = {pm.get('id') for pm in n.get('params', []) if pm.get('id')}
             new_params = []
-            for parsed_pm in parsed.get('params', []):
+            for parsed_pm in rec.get('params', []):
                 pname = parsed_pm.get('name')
                 if pname in existing_params:
                     merged = dict(existing_params[pname])
@@ -858,13 +903,104 @@ class StudioStore:
                         new_id = f"{n['id']}_p{counter}"
                     used_param_ids.add(new_id)
                     new_params.append({**parsed_pm, 'id': new_id, 'exposed': False, 'label': None})
-            if [pm.get('name') for pm in new_params] != [pm.get('name') for pm in n.get('params', [])]:
+            if new_params != n.get('params', []):
                 n['params'] = new_params
                 updated = True
 
+        p['nodes'] = retained_nodes
+        if removed_node_ids:
+            p['connections'] = [c for c in p.get('connections', []) if c.get('from', {}).get('n') not in removed_node_ids and c.get('to', {}).get('n') not in removed_node_ids]
+            modules = p.get('studio', {}).get('modules', {})
+            for rid in removed_node_ids:
+                modules.pop(rid, None)
+            for unit in p.get('studio', {}).get('deployment', {}).get('units', []):
+                unit['nodeIds'] = [nid for nid in unit.get('nodeIds', []) if nid not in removed_node_ids]
+
+        # Add unclaimed recs as new nodes
+        unclaimed = [rec for k, rec in unique_recs.items() if k not in claimed_recs]
+        if unclaimed:
+            updated = True
+            max_x = max([n.get('x', 0) for n in retained_nodes] or [60])
+            max_y = max([n.get('y', 0) for n in retained_nodes] or [80])
+            for idx, rec in enumerate(unclaimed):
+                pkg = rec['package']
+                art = rec['artifact']
+                node_name = rec['node']
+                lbl = node_name if node_name != '__pkg_extracted_name__node' else art
+                base_id = f"node_{pkg}_{node_name}"
+                new_id = base_id
+                c = 1
+                while new_id in existing_node_ids:
+                    new_id = f"{base_id}_{c}"
+                    c += 1
+                existing_node_ids.add(new_id)
+
+                ifaces = []
+                for i_idx, iface in enumerate(rec.get('interfaces', [])):
+                    ifaces.append({
+                        'id': f"{new_id}_i{i_idx}",
+                        'name': iface['name'],
+                        'kind': iface['kind'],
+                        'type': iface.get('type'),
+                        'qos': iface.get('qos'),
+                        'exposed': True,
+                        'label': iface.get('name')
+                    })
+
+                params = []
+                for p_idx, pm in enumerate(rec.get('params', [])):
+                    params.append({
+                        'id': f"{new_id}_p{p_idx}",
+                        'name': pm['name'],
+                        'ptype': pm.get('ptype') or 'String',
+                        'value': pm.get('value'),
+                        'exposed': False,
+                        'label': None
+                    })
+
+                new_x = 60 + ((len(retained_nodes) + idx) % 3) * 360
+                new_y = max_y + 280 + ((len(retained_nodes) + idx) // 3) * 260
+                new_node = {
+                    'id': new_id,
+                    'label': lbl,
+                    'backing': 'hand',
+                    'pkg': pkg,
+                    'node': node_name,
+                    'artifact': art,
+                    'namespace': None,
+                    'x': new_x,
+                    'y': new_y,
+                    'ifaces': ifaces,
+                    'params': params
+                }
+                p['nodes'].append(new_node)
+                p.setdefault('packages', {}).setdefault(pkg, {})
+
+                role = 'Unassigned'
+                nl = (node_name + ' ' + art + ' ' + pkg).lower()
+                if any(w in nl for w in ['locator', 'detector', 'cam', 'vision', 'perception', 'segmentation']):
+                    role = 'Perception'
+                elif any(w in nl for w in ['coordinator', 'plan', 'client']):
+                    role = 'Planning'
+                elif any(w in nl for w in ['driver', 'gripper', 'motor', 'actuator', 'server']):
+                    role = 'Actuation'
+                p.setdefault('studio', {}).setdefault('modules', {})[new_id] = {
+                    'role': role,
+                    'unit': 'unassigned',
+                    'sourcePaths': []
+                }
+
+        # Keep selectedPackages in sync
+        selected = p.setdefault('studio', {}).setdefault('selectedPackages', [])
+        selected_names = {sp.get('name') for sp in selected if isinstance(sp, dict)}
+        for pkg in packages_with_models:
+            if pkg not in selected_names:
+                selected.append({'name': pkg, 'path': pkg, 'buildType': 'ament_cmake'})
+                selected_names.add(pkg)
+
         return updated
 
-    def _scan(self,pid):
+    def _scan(self,pid,workspace_root=None,models_dir=None):
         root=self.root(pid); self._recover(root); s=self.state(root)
         project_file=root/'project.json'; actual_hash=digest(project_file.read_bytes()) if project_file.exists() else None
         if s.get('projectInvalid') and actual_hash==s.get('projectHash'):
@@ -885,12 +1021,42 @@ class StudioStore:
         changed=[{'path':k,'beforeHash':previous.get(k),'hash':current.get(k)} for k in sorted(set(current)|set(previous)) if current.get(k)!=previous.get(k)]
 
         model_dirs=set()
+        if models_dir and Path(models_dir).is_dir():
+            model_dirs.add(Path(models_dir).expanduser().resolve())
+        if workspace_root:
+            ws_cand = Path(workspace_root).expanduser().resolve()
+            if (ws_cand / 'models').is_dir():
+                model_dirs.add((ws_cand / 'models').resolve())
+        pdir = s.get('promotedTargetDir') or p.get('studio', {}).get('promotedTargetDir')
+        if pdir and Path(pdir).is_dir():
+            model_dirs.add(Path(pdir).expanduser().resolve())
+        ws_stored = p.get('studio', {}).get('workspaceRoot')
+        if ws_stored:
+            ws_cand = Path(ws_stored).expanduser().resolve()
+            if (ws_cand / 'models').is_dir():
+                model_dirs.add((ws_cand / 'models').resolve())
         if (root/'models').is_dir(): model_dirs.add((root/'models').resolve())
+
+        all_pkg_paths = []
         for pkg_info in p.get('packages',{}).values():
             if isinstance(pkg_info,dict) and pkg_info.get('path'):
-                cand=Path(pkg_info['path']).expanduser().resolve()
-                if cand.is_dir(): model_dirs.add(cand)
-                elif (root/cand).is_dir(): model_dirs.add((root/cand).resolve())
+                all_pkg_paths.append(pkg_info['path'])
+        for sp in p.get('studio',{}).get('selectedPackages',[]):
+            if isinstance(sp,dict) and sp.get('path'):
+                all_pkg_paths.append(sp['path'])
+
+        for ppath in all_pkg_paths:
+            cand = Path(ppath).expanduser()
+            if not cand.is_absolute() and (workspace_root or ws_stored):
+                cand = (Path(workspace_root or ws_stored) / cand).resolve()
+            else:
+                cand = cand.resolve()
+            for parent in [cand, *cand.parents]:
+                if (parent / 'models').is_dir():
+                    model_dirs.add((parent / 'models').resolve())
+                if (parent / '.rostooling').is_dir() and not ws_stored:
+                    p.setdefault('studio',{})['workspaceRoot'] = str(parent.resolve())
+
         for rel in current:
             if rel.endswith('.ros2') or rel.endswith('.rossystem'): model_dirs.add((root/rel).parent.resolve())
 
@@ -906,7 +1072,7 @@ class StudioStore:
 
         has_rossystem=any(str(path).endswith('.rossystem') for path in s.get('modelPaths',[])) or any(rel.endswith('.rossystem') for rel in current) or any(any(f.name.endswith('.rossystem') for f in md.glob('*.rossystem')) for md in model_dirs)
         nodes_changed=False
-        if not has_rossystem and model_dirs and (model_files_changed or flags_changed):
+        if not has_rossystem and model_dirs:
             nodes_changed=self._refresh_nodes_from_ros2(p,model_dirs)
 
         if not changed and not model_files_changed and not flags_changed and not nodes_changed: return

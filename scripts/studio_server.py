@@ -209,7 +209,10 @@ class Handler(BaseHTTPRequestHandler):
         if sub=='repositories/submodules' and method=='POST':
             return {'ok':True,**self.server.repositories.init_submodules(root,body.get('repositoryId'),body.get('paths'))}
         if not sub:
-            if method=='GET': return s.get_project(pid)
+            if method=='GET':
+                ws_root = query.get('workspaceRoot', [''])[0] or None
+                m_dir = query.get('modelsDir', [''])[0] or None
+                return s.get_project(pid, workspace_root=ws_root, models_dir=m_dir)
             if method=='PUT': return s.save_project(pid,body)
             if method=='DELETE': return s.delete_project(pid,body)
         if sub=='session' and method=='PUT': return s.save_session(pid,body)
