@@ -871,24 +871,19 @@ class StudioStore:
             s['sequence']=s.get('sequence',0)+1; self._commit(root,incoming,s,'Accepted external project.json edit',expected={'project.json':actual_hash}); s=self.state(root)
         p=self._project(root); current=self._observed(root); previous=s.get('observed',{})
         changed=[{'path':k,'beforeHash':previous.get(k),'hash':current.get(k)} for k in sorted(set(current)|set(previous)) if current.get(k)!=previous.get(k)]
-        if not changed: return
-        s['observed']=current; s['sequence']=s.get('sequence',0)+1; s['changes']=changed
-        tracked=set(s.get('modelPaths',[]))
-        scopes={str(Path(path).parent) for path in tracked if path.endswith('.rossystem')}
-        for rel in current:
-            if Path(rel).suffix in ['.ros2','.ros'] and str(Path(rel).parent) in scopes: tracked.add(rel)
-        s['modelPaths']=sorted(tracked)
-        hashes=self._hashes(root,s.get('modelPaths',[]))
 
         model_dirs=set()
-        if (root/'models').is_dir(): model_dirs.add(root/'models')
+        if (root/'models').is_dir(): model_dirs.add((root/'models').resolve())
         for pkg_info in p.get('packages',{}).values():
             if isinstance(pkg_info,dict) and pkg_info.get('path'):
-                cand=Path(pkg_info['path'])
+                cand=Path(pkg_info['path']).expanduser().resolve()
                 if cand.is_dir(): model_dirs.add(cand)
-                elif (root/cand).is_dir(): model_dirs.add(root/cand)
+                elif (root/cand).is_dir(): model_dirs.add((root/cand).resolve())
         for rel in current:
-            if rel.endswith('.ros2'): model_dirs.add((root/rel).parent)
+            if rel.endswith('.ros2') or rel.endswith('.rossystem'): model_dirs.add((root/rel).parent.resolve())
+
+        model_hashes={f.as_posix():digest(f.read_bytes()) for md in model_dirs for f in md.glob('*') if f.suffix in ['.ros2','.ros','.rossystem'] and f.is_file()}
+        model_files_changed=model_hashes!=s.get('modelHashes',{})
 
         flags_changed=False
         if p.get('studio',{}).get('flags') and model_dirs:
@@ -897,10 +892,20 @@ class StudioStore:
                 p['studio']['flags']=reconciled
                 flags_changed=True
 
-        has_rossystem=any(str(path).endswith('.rossystem') for path in tracked) or any(rel.endswith('.rossystem') for rel in current)
+        has_rossystem=any(str(path).endswith('.rossystem') for path in s.get('modelPaths',[])) or any(rel.endswith('.rossystem') for rel in current) or any(any(f.name.endswith('.rossystem') for f in md.glob('*.rossystem')) for md in model_dirs)
         nodes_changed=False
-        if not has_rossystem and model_dirs:
+        if not has_rossystem and model_dirs and (model_files_changed or flags_changed):
             nodes_changed=self._refresh_nodes_from_ros2(p,model_dirs)
+
+        if not changed and not model_files_changed and not flags_changed and not nodes_changed: return
+
+        s['observed']=current; s['sequence']=s.get('sequence',0)+1; s['changes']=changed; s['modelHashes']=model_hashes
+        tracked=set(s.get('modelPaths',[]))
+        scopes={str(Path(path).parent) for path in tracked if path.endswith('.rossystem')}
+        for rel in current:
+            if Path(rel).suffix in ['.ros2','.ros'] and str(Path(rel).parent) in scopes: tracked.add(rel)
+        s['modelPaths']=sorted(tracked)
+        hashes=self._hashes(root,s.get('modelPaths',[]))
 
         model_changed=hashes!=s.get('baseModelHashes',{}) or (s.get('modelState')=='external-invalid' and not s.get('projectInvalid')) or flags_changed or nodes_changed
         if model_changed:
