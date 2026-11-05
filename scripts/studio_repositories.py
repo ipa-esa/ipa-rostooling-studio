@@ -141,6 +141,11 @@ class StudioRepositories:
         return default
     def locate_repository(self,project_root,request):
         root=self._root(project_root); name=request.get('name'); value=request.get('path')
+        if not name and isinstance(value, str):
+            raw = Path(value).name
+            derived = re.sub(r'[^a-z0-9_-]+', '_', raw.lower()).strip('_')
+            if derived and not derived[0].isalpha(): derived = 'repo_' + derived
+            name = (derived or 'repo')[:48]
         if not isinstance(name,str) or not UNIT_RE.fullmatch(name): raise RuntimeFailure('invalid_repository','Choose a lower-case repository name.')
         if not isinstance(value,str) or not Path(value).is_absolute(): raise RuntimeFailure('invalid_path','Locate requires an absolute checkout directory.')
         target=Path(value).resolve()
@@ -188,7 +193,13 @@ class StudioRepositories:
     def fetch_repository(self,project_root,request):
         if request.get('operation')=='locate': return self.locate_repository(project_root,request)
         root=self._root(project_root)
-        name=request.get('name'); url=request.get('url'); revision=request.get('revision') or 'HEAD'
+        name=request.get('name'); url=request.get('url'); revision=request.get('revision') or request.get('branch') or 'HEAD'
+        if not name and isinstance(url, str):
+            raw = url.rstrip('/').split('/')[-1]
+            if raw.endswith('.git'): raw = raw[:-4]
+            derived = re.sub(r'[^a-z0-9_-]+', '_', raw.lower()).strip('_')
+            if derived and not derived[0].isalpha(): derived = 'repo_' + derived
+            name = (derived or 'repo')[:48]
         if not isinstance(name,str) or not UNIT_RE.fullmatch(name): raise RuntimeFailure('invalid_repository','Repository name must use lower-case letters, digits, underscores or hyphens.')
         if not isinstance(url,str) or not re.fullmatch(r'https://[A-Za-z0-9.-]+/[A-Za-z0-9_./-]+(?:\.git)?',url) or '..' in url.split('/'): raise RuntimeFailure('invalid_url','Use an HTTPS repository URL without credentials, query parameters or shell syntax.')
         if not isinstance(revision,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./-]{0,200}',revision) or '..' in revision: raise RuntimeFailure('invalid_revision','Choose a branch, tag or commit ID.')
