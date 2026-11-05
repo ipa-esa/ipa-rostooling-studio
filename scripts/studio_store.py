@@ -819,6 +819,7 @@ class StudioStore:
                 continue
 
             existing_ifaces = {(i.get('kind'), i.get('name')): i for i in n.get('ifaces', [])}
+            used_iface_ids = {i.get('id') for i in n.get('ifaces', []) if i.get('id')}
             new_ifaces = []
             for parsed_iface in parsed.get('interfaces', []):
                 ikey = (parsed_iface.get('kind'), parsed_iface.get('name'))
@@ -828,13 +829,19 @@ class StudioStore:
                     merged['id'] = existing_ifaces[ikey]['id']
                     new_ifaces.append(merged)
                 else:
-                    new_id = f"{n['id']}_i{len(new_ifaces)}"
+                    counter = len(used_iface_ids)
+                    new_id = f"{n['id']}_i{counter}"
+                    while new_id in used_iface_ids:
+                        counter += 1
+                        new_id = f"{n['id']}_i{counter}"
+                    used_iface_ids.add(new_id)
                     new_ifaces.append({**parsed_iface, 'id': new_id, 'exposed': True, 'label': None})
             if [i.get('name') for i in new_ifaces] != [i.get('name') for i in n.get('ifaces', [])]:
                 n['ifaces'] = new_ifaces
                 updated = True
 
             existing_params = {pm.get('name'): pm for pm in n.get('params', [])}
+            used_param_ids = {pm.get('id') for pm in n.get('params', []) if pm.get('id')}
             new_params = []
             for parsed_pm in parsed.get('params', []):
                 pname = parsed_pm.get('name')
@@ -844,7 +851,12 @@ class StudioStore:
                     merged['id'] = existing_params[pname]['id']
                     new_params.append(merged)
                 else:
-                    new_id = f"{n['id']}_p{len(new_params)}"
+                    counter = len(used_param_ids)
+                    new_id = f"{n['id']}_p{counter}"
+                    while new_id in used_param_ids:
+                        counter += 1
+                        new_id = f"{n['id']}_p{counter}"
+                    used_param_ids.add(new_id)
                     new_params.append({**parsed_pm, 'id': new_id, 'exposed': False, 'label': None})
             if [pm.get('name') for pm in new_params] != [pm.get('name') for pm in n.get('params', [])]:
                 n['params'] = new_params
