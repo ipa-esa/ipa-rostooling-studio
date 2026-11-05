@@ -416,6 +416,11 @@ class StudioStore:
                 p['connections'] = []
                 p['packages'] = {}
                 p.get('studio', {}).pop('tutorial', None)
+                if 'deployment' in p.get('studio', {}):
+                    for unit in p['studio']['deployment'].get('units', []):
+                        unit['nodeIds'] = []
+                if 'modules' in p.get('studio', {}):
+                    p['studio']['modules'] = {}
 
             seen_nodes = set((n.get('pkg'), n.get('node')) for n in p.get('nodes', []))
 
@@ -459,6 +464,19 @@ class StudioStore:
                     p.setdefault('types', {}).update(parsed_types)
                 except Exception:
                     pass
+
+            retained = {n['id'] for n in p.get('nodes', [])}
+            modules = p.setdefault('studio', {}).setdefault('modules', {})
+            for nid in list(modules.keys()):
+                if nid not in retained:
+                    del modules[nid]
+            for n in p.get('nodes', []):
+                modules.setdefault(n['id'], {'role': 'Unassigned', 'unit': 'unassigned', 'sourcePaths': []})
+            for unit in p.get('studio', {}).get('deployment', {}).get('units', []):
+                missing = [n for n in unit.get('nodeIds', []) if n not in retained]
+                if missing:
+                    unit['orphanedNodeIds'] = sorted(set(unit.get('orphanedNodeIds', []) + missing))
+                    unit['nodeIds'] = [n for n in unit.get('nodeIds', []) if n in retained]
 
             p.setdefault('studio', {})['extractedPackages'] = [pkg.get('name') if isinstance(pkg, dict) else str(pkg) for pkg in packages]
             p['studio']['flags'] = all_flags
