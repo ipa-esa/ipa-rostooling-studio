@@ -752,6 +752,106 @@ class StudioStore:
             out=self._envelope(pid)
             out['reconciledFile']=str(saved) if saved else None
             return out
+    def _reconcile_flags(self, flags, model_dirs):
+        if not flags or not model_dirs:
+            return flags
+        open_flag_re = re.compile(r"^#\s*(FLAG|OPEN|UNRESOLVED)\b")
+        remaining = []
+        cache = {}
+        for flag in flags:
+            pkg = flag.get('package')
+            if not pkg:
+                remaining.append(flag)
+                continue
+            if pkg not in cache:
+                cand_file = None
+                for m_dir in model_dirs:
+                    cand = Path(m_dir) / f"{pkg}.ros2"
+                    if cand.is_file():
+                        cand_file = cand
+                        break
+                if cand_file:
+                    try:
+                        lines = cand_file.read_text(encoding='utf8').splitlines()
+                        cache[pkg] = [l.strip() for l in lines if open_flag_re.match(l.strip())]
+                    except Exception:
+                        cache[pkg] = None
+                else:
+                    cache[pkg] = None
+            open_lines = cache[pkg]
+            if open_lines is None:
+                remaining.append(flag)
+                continue
+            if not open_lines:
+                continue
+            at = flag.get('at', '')
+            at_base = Path(at.split(':')[0]).name if at else ''
+            lineno = at.split(':')[-1] if ':' in at else ''
+            is_still_open = False
+            for ol in open_lines:
+                if at and (at in ol or (at_base and at_base in ol and lineno and lineno in ol)):
+                    is_still_open = True
+                    break
+            if is_still_open:
+                remaining.append(flag)
+        return remaining
+
+    def _refresh_nodes_from_ros2(self, p, model_dirs):
+        updated = False
+        all_parsed = {}
+        for m_dir in model_dirs:
+            for f in sorted(Path(m_dir).glob('*.ros2')):
+                try:
+                    parsed, _ = adapter.parse_ros2(str(f))
+                    all_parsed.update(parsed)
+                except Exception:
+                    pass
+        if not all_parsed:
+            return False
+
+        nodes = p.setdefault('nodes', [])
+        for n in nodes:
+            pkg = n.get('pkg')
+            node_name = n.get('node')
+            key = (pkg, node_name)
+            parsed = all_parsed.get(key)
+            if not parsed:
+                continue
+
+            existing_ifaces = {(i.get('kind'), i.get('name')): i for i in n.get('ifaces', [])}
+            new_ifaces = []
+            for parsed_iface in parsed.get('interfaces', []):
+                ikey = (parsed_iface.get('kind'), parsed_iface.get('name'))
+                if ikey in existing_ifaces:
+                    merged = dict(existing_ifaces[ikey])
+                    merged.update(parsed_iface)
+                    merged['id'] = existing_ifaces[ikey]['id']
+                    new_ifaces.append(merged)
+                else:
+                    new_id = f"{n['id']}_i{len(new_ifaces)}"
+                    new_ifaces.append({**parsed_iface, 'id': new_id, 'exposed': True, 'label': None})
+            if [i.get('name') for i in new_ifaces] != [i.get('name') for i in n.get('ifaces', [])]:
+                n['ifaces'] = new_ifaces
+                updated = True
+
+            existing_params = {pm.get('name'): pm for pm in n.get('params', [])}
+            new_params = []
+            for parsed_pm in parsed.get('params', []):
+                pname = parsed_pm.get('name')
+                if pname in existing_params:
+                    merged = dict(existing_params[pname])
+                    merged.update(parsed_pm)
+                    merged['id'] = existing_params[pname]['id']
+                    new_params.append(merged)
+                else:
+                    new_id = f"{n['id']}_p{len(new_params)}"
+                    new_params.append({**parsed_pm, 'id': new_id, 'exposed': False, 'label': None})
+            if [pm.get('name') for pm in new_params] != [pm.get('name') for pm in n.get('params', [])]:
+                n['params'] = new_params
+                updated = True
+
+        return updated
+
     def _scan(self,pid):
         root=self.root(pid); self._recover(root); s=self.state(root)
         project_file=root/'project.json'; actual_hash=digest(project_file.read_bytes()) if project_file.exists() else None
@@ -779,17 +879,42 @@ class StudioStore:
             if Path(rel).suffix in ['.ros2','.ros'] and str(Path(rel).parent) in scopes: tracked.add(rel)
         s['modelPaths']=sorted(tracked)
         hashes=self._hashes(root,s.get('modelPaths',[]))
-        model_changed=hashes!=s.get('baseModelHashes',{}) or (s.get('modelState')=='external-invalid' and not s.get('projectInvalid'))
+
+        model_dirs=set()
+        if (root/'models').is_dir(): model_dirs.add(root/'models')
+        for pkg_info in p.get('packages',{}).values():
+            if isinstance(pkg_info,dict) and pkg_info.get('path'):
+                cand=Path(pkg_info['path'])
+                if cand.is_dir(): model_dirs.add(cand)
+                elif (root/cand).is_dir(): model_dirs.add(root/cand)
+        for rel in current:
+            if rel.endswith('.ros2'): model_dirs.add((root/rel).parent)
+
+        flags_changed=False
+        if p.get('studio',{}).get('flags') and model_dirs:
+            reconciled=self._reconcile_flags(p['studio']['flags'],model_dirs)
+            if len(reconciled)!=len(p['studio']['flags']):
+                p['studio']['flags']=reconciled
+                flags_changed=True
+
+        has_rossystem=any(str(path).endswith('.rossystem') for path in tracked) or any(rel.endswith('.rossystem') for rel in current)
+        nodes_changed=False
+        if not has_rossystem and model_dirs:
+            nodes_changed=self._refresh_nodes_from_ros2(p,model_dirs)
+
+        model_changed=hashes!=s.get('baseModelHashes',{}) or (s.get('modelState')=='external-invalid' and not s.get('projectInvalid')) or flags_changed or nodes_changed
         if model_changed:
-            try:
-                incoming=self._parse(root,s,p)
-                if hashes!=self._hashes(root,s.get('modelPaths',[])): return
-                if model_identity(p)!=s.get('acceptedIdentity'):
-                    s['modelState']='conflict'; s['diagnostics']=['External model and saved draft both changed. Review before replacing either.']; s['externalProject']=incoming
-                else:
-                    p=incoming; s['acceptedIdentity']=model_identity(p); s['baseModelHashes']=hashes; s['modelState']='clean'; s['diagnostics']=[]
-            except Exception as e: s['modelState']='external-invalid'; s['diagnostics']=['File invalid; graph shows previous valid version. '+str(e)]
-        if model_changed:
+            if has_rossystem:
+                try:
+                    incoming=self._parse(root,s,p)
+                    if hashes!=self._hashes(root,s.get('modelPaths',[])): return
+                    if model_identity(p)!=s.get('acceptedIdentity'):
+                        s['modelState']='conflict'; s['diagnostics']=['External model and saved draft both changed. Review before replacing either.']; s['externalProject']=incoming
+                    else:
+                        p=incoming; s['acceptedIdentity']=model_identity(p); s['baseModelHashes']=hashes; s['modelState']='clean'; s['diagnostics']=[]
+                except Exception as e: s['modelState']='external-invalid'; s['diagnostics']=['File invalid; graph shows previous valid version. '+str(e)]
+            else:
+                s['acceptedIdentity']=model_identity(p); s['baseModelHashes']=hashes; s['modelState']='clean'; s['diagnostics']=[]
             self._commit(root,p,s,'Observed file changes')
         else:
             # Source observations are not edits to the engineering draft. Keep its
