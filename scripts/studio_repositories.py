@@ -190,6 +190,45 @@ class StudioRepositories:
             _write(local,json.dumps(settings,indent=2).encode())
             _write(manifest,yaml.safe_dump(document,sort_keys=True).encode())
         return {'repository':{'path':relative,'localPath':str(target),'url':url,'revision':state.get('currentCommit'),**state},'manifestPath':'repositories.repos','message':'Existing checkout linked. Its files were not moved or overwritten.'}
+    def _resolve_destination(self, root, name, request=None):
+        request = request or {}
+        target_dir_raw = request.get('targetDir') or request.get('target_dir') or request.get('destination')
+        if target_dir_raw:
+            return Path(target_dir_raw).expanduser().resolve()
+
+        ws_root_raw = request.get('workspaceRoot') or request.get('workspace_root')
+        if not ws_root_raw:
+            try:
+                p_file = root / 'project.json'
+                if p_file.is_file():
+                    p_data = json.loads(p_file.read_text(encoding='utf8'))
+                    ws_root_raw = p_data.get('studio', {}).get('workspaceRoot')
+                if not ws_root_raw:
+                    st_file = root / '.studio/state.json'
+                    if st_file.is_file():
+                        st_data = json.loads(st_file.read_text(encoding='utf8'))
+                        pdir = st_data.get('promotedTargetDir')
+                        if pdir:
+                            cand = Path(pdir).resolve()
+                            ws_root_raw = str(cand.parent if cand.name == 'models' else cand)
+            except Exception:
+                pass
+
+        if ws_root_raw:
+            ws = Path(ws_root_raw).expanduser().resolve()
+            if ws.name.lower() == 'src':
+                # If the src folder is open in the workspace, pull into root
+                return (ws / name).resolve()
+            elif (ws / 'src').is_dir():
+                # If it is a ros workspace with src folder, pull into src
+                return (ws / 'src' / name).resolve()
+            elif (ws / '.catkin_workspace').is_file() or (ws / 'colcon.pkg').is_file() or ((ws / 'build').is_dir() and (ws / 'install').is_dir()) or (ws / '.rostooling').is_dir():
+                return (ws / 'src' / name).resolve()
+            else:
+                return (ws / name).resolve()
+
+        return _inside(root, 'src/vendor/' + name)
+
     def fetch_repository(self,project_root,request):
         if request.get('operation')=='locate': return self.locate_repository(project_root,request)
         root=self._root(project_root)
@@ -206,45 +245,110 @@ class StudioRepositories:
         git=shutil.which('git')
         if not git: raise RuntimeFailure('git_unavailable','Git is unavailable.',503)
         with self._lock(root):
-            relative='src/vendor/'+name; destination=_inside(root,relative)
-            if destination.exists(): raise RuntimeFailure('repository_exists','This checkout already exists; it was not replaced.',409)
-            manifest=_inside(root,'repositories.repos'); previous=manifest.read_bytes() if manifest.exists() else None
+            destination=self._resolve_destination(root,name,request)
+            manifest=_inside(root,'repositories.repos')
+            local=_inside(root,'.studio/local.json')
+            previous=manifest.read_bytes() if manifest.exists() else None
             document=yaml.safe_load(previous) if previous else {'repositories':{}}
-            if not isinstance(document,dict) or not isinstance(document.get('repositories'),dict): raise RuntimeFailure('invalid_repositories','Existing repository manifest is invalid.',422)
-            if relative in document['repositories']: raise RuntimeFailure('repository_exists','This repository already has a manifest entry.',409)
-            destination.parent.mkdir(parents=True,exist_ok=True)
-            stage=destination.with_name('.fetch-'+uuid.uuid4().hex)
+            settings=json.loads(local.read_text()) if local.exists() else {}
+            if not isinstance(document,dict) or not isinstance(document.get('repositories'),dict):
+                document={'repositories':{}}
+            if not isinstance(settings,dict):
+                settings={}
+            mappings=settings.setdefault('repositories',{})
+            if not isinstance(mappings,dict):
+                mappings={}
+                settings['repositories']=mappings
+
+            relative=destination.relative_to(root).as_posix() if destination.is_relative_to(root) else ('src/vendor/'+name)
             common=[git,'-c','core.hooksPath=/dev/null','-c','protocol.file.allow=never']
-            try:
-                for argv in [common+['init',str(stage)],common+['-C',str(stage),'remote','add','origin',url],common+['-C',str(stage),'fetch','--depth','1','origin',revision],common+['-C',str(stage),'checkout','--detach','FETCH_HEAD']]:
-                    result=self._run(argv,timeout=300)
-                    if not result['ok']: raise RuntimeFailure('fetch_failed',result['stderr'] or result['stdout'],422)
-                pinned=self._run(common+['-C',str(stage),'rev-parse','HEAD'])['stdout'].strip()
-                if not re.fullmatch('[a-f0-9]{40,64}',pinned): raise RuntimeFailure('fetch_failed','Git did not resolve a commit ID.',422)
-                # Submodules are part of what this repository actually IS at this commit, not a
-                # separate opt-in fetch the way a *.repos sibling dependency is (that becomes its
-                # own top-level, independently-named repository; a submodule does not) -- so a
-                # plain "fetch this repository" already includes them, matching what `git clone
-                # --recurse-submodules` would do. Best-effort: a submodule that fails to init
-                # (private, network hiccup) does not lose the checkout that DID succeed, it's
-                # just reported so the user knows to run "Initialize submodules" again later.
-                submodule_note=None
-                if (stage/'.gitmodules').is_file():
-                    sub=self._run(common+['-C',str(stage),'submodule','update','--init','--recursive','--depth','1'],timeout=300)
-                    if not sub['ok']: submodule_note='Submodules were not fully initialized: '+(sub['stderr'] or sub['stdout'])[-500:]
-                current=manifest.read_bytes() if manifest.exists() else None
-                if current!=previous: raise RuntimeFailure('manifest_changed','Repository manifest changed during fetch; no checkout was adopted.',409)
-                document['repositories'][relative]={'type':'git','url':url,'version':pinned}
-                os.rename(stage,destination)
-                try: _write(manifest,yaml.safe_dump(document,sort_keys=True).encode())
-                except Exception:
-                    # Preserve successfully fetched code; report that manifest recovery is needed.
-                    raise RuntimeFailure('manifest_write_failed','Checkout is retained at '+relative+'; writing its manifest failed. Retry the manifest update manually.',503)
-            finally:
-                if stage.exists(): shutil.rmtree(stage)
-            message='Source checked out at a pinned commit. Dependencies were not installed and no build was started.'
-            if submodule_note: message+=' '+submodule_note
-            return {'repository':{'path':relative,'url':url,'revision':pinned,'requestedRevision':revision},'manifestPath':'repositories.repos','message':message}
+            is_existing_git=destination.is_dir() and (destination/'.git').exists()
+
+            if is_existing_git:
+                try:
+                    fetch_res=self._run(common+['-C',str(destination),'fetch','--depth','1','origin',revision],timeout=300)
+                    if not fetch_res['ok']:
+                        fetch_res=self._run(common+['-C',str(destination),'fetch','origin'],timeout=300)
+                    if not fetch_res['ok']:
+                        raise RuntimeFailure('fetch_failed',fetch_res['stderr'] or fetch_res['stdout'],422)
+
+                    checkout_res=self._run(common+['-C',str(destination),'checkout',revision],timeout=300)
+                    if not checkout_res['ok']:
+                        checkout_res=self._run(common+['-C',str(destination),'checkout','--detach','FETCH_HEAD'],timeout=300)
+                    if not checkout_res['ok']:
+                        raise RuntimeFailure('fetch_failed',checkout_res['stderr'] or checkout_res['stdout'],422)
+
+                    self._run(common+['-C',str(destination),'pull','--ff-only','origin',revision],timeout=300)
+
+                    pinned=self._run(common+['-C',str(destination),'rev-parse','HEAD'])['stdout'].strip()
+                    if not re.fullmatch(r'[a-f0-9]{40,64}',pinned):
+                        raise RuntimeFailure('fetch_failed','Git did not resolve a commit ID.',422)
+
+                    submodule_note=None
+                    if (destination/'.gitmodules').is_file():
+                        sub=self._run(common+['-C',str(destination),'submodule','update','--init','--recursive','--depth','1'],timeout=300)
+                        if not sub['ok']:
+                            submodule_note='Submodules were not fully initialized: '+(sub['stderr'] or sub['stdout'])[-500:]
+                except Exception as e:
+                    if isinstance(e,RuntimeFailure): raise
+                    raise RuntimeFailure('pull_failed',f'Failed to pull existing repository: {e}',503)
+
+                message=f'Repository pulled and updated at commit {pinned[:8]}.'
+                if submodule_note: message+=' '+submodule_note
+
+            elif destination.exists():
+                raise RuntimeFailure('repository_exists',f'Target directory "{destination}" already exists and is not a Git repository.',409)
+
+            else:
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                stage=destination.with_name('.fetch-'+uuid.uuid4().hex)
+                try:
+                    for argv in [
+                        common+['init',str(stage)],
+                        common+['-C',str(stage),'remote','add','origin',url],
+                        common+['-C',str(stage),'fetch','--depth','1','origin',revision],
+                        common+['-C',str(stage),'checkout','--detach','FETCH_HEAD']
+                    ]:
+                        result=self._run(argv,timeout=300)
+                        if not result['ok']:
+                            raise RuntimeFailure('fetch_failed',result['stderr'] or result['stdout'],422)
+
+                    pinned=self._run(common+['-C',str(stage),'rev-parse','HEAD'])['stdout'].strip()
+                    if not re.fullmatch(r'[a-f0-9]{40,64}',pinned):
+                        raise RuntimeFailure('fetch_failed','Git did not resolve a commit ID.',422)
+
+                    submodule_note=None
+                    if (stage/'.gitmodules').is_file():
+                        sub=self._run(common+['-C',str(stage),'submodule','update','--init','--recursive','--depth','1'],timeout=300)
+                        if not sub['ok']:
+                            submodule_note='Submodules were not fully initialized: '+(sub['stderr'] or sub['stdout'])[-500:]
+
+                    os.rename(stage,destination)
+                finally:
+                    if stage.exists():
+                        shutil.rmtree(stage)
+
+                message=f'Source checked out at a pinned commit {pinned[:8]}. Dependencies were not installed and no build was started.'
+                if submodule_note: message+=' '+submodule_note
+
+            document['repositories'][relative]={'type':'git','url':url,'version':pinned}
+            if not destination.is_relative_to(root):
+                mappings[relative]={'path':str(destination)}
+                _write(self._mapping_receipt(root,relative),json.dumps({'root':str(root),'prefix':relative,'path':str(destination)}).encode())
+                _write(local,json.dumps(settings,indent=2).encode())
+            _write(manifest,yaml.safe_dump(document,sort_keys=True).encode())
+
+            return {
+                'repository':{
+                    'path':relative,
+                    'localPath':str(destination),
+                    'url':url,
+                    'revision':pinned,
+                    'requestedRevision':revision
+                },
+                'manifestPath':'repositories.repos',
+                'message':message
+            }
 
     def repository_dependencies(self,project_root,relative):
         """Find *.repos manifests -- the standard vcstool format ROS workspaces already use to

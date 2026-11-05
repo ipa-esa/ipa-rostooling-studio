@@ -117,12 +117,12 @@ class StudioSource:
                 if path.name == 'project.json' or path.suffix in {'.ros', '.ros2', '.rossystem'}:
                     continue
                 size = path.stat().st_size
+                if size > MAX_FILE:
+                    continue
                 total += size
-                if size > MAX_FILE or total > MAX_TOTAL or len(records) >= 10000:
-                    raise SourceError('source_size', 'Choose a smaller source directory; scan limits were reached.', 413)
+                if total > MAX_TOTAL or len(records) >= 10000:
+                    break
                 data = path.read_bytes()
-                if len(data) > MAX_FILE:
-                    raise SourceError('source_size', 'A source file grew beyond the scan limit.', 413)
                 rel = path.relative_to(root).as_posix()
                 records.append({'path': rel, 'hash': _hash(data), 'size': len(data)})
         return records
