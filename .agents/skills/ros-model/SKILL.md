@@ -31,11 +31,22 @@ declares (see *Output layout*), not one per node.
   empty string `""`.
 - `.ros1` files. Out of scope.
 
-## Package discovery: which existing ROS packages fit this project
+## Package discovery & Intent-driven modeling: which ROS packages fit this project
 
-Use this when asked which ROS packages a project can reuse — before linking, extracting or
-modeling anything. It only *suggests*; the user picks.
+Use this when asked which ROS packages a project can reuse, or when asked to extract and model packages for a mission.
 
+### Reading System Intent (Stage 1)
+Always read the project's intent specifications in `.rostooling/active_project.json` (or `project.json`):
+- `studio.brief`: `purpose`, `environment`, `constraints`, `acceptance`.
+- `studio.behavior`: operational mission behaviors, triggers, and responses.
+- `studio.criteria`: acceptance criteria and verification gates.
+
+Use this Intent context to:
+1. **Filter and select workspace packages**: Analyze all packages found in the workspace against the mission behaviors. Automatically select and suggest packages that provide the required perception, planning, manipulation, robot description, simulation, or hardware interfaces.
+2. **Resolve dynamic and runtime-built names**: Cross-reference dynamic parameters, runtime topic formats (e.g. `/vacuum_gripper/{fruit}/attach`), and mode flags against the operating environment and application objects rather than leaving `# FLAG` comments.
+3. **Set realistic parameter defaults**: Populate node parameters with values matching the mission constraints, target frame names, and hardware setup described in the intent.
+
+### Suggesting existing packages:
 1. **Read the brief.** It is in the project's `project.json` under `studio.brief` (`purpose`,
    `users`, `environment`, `constraints`, `acceptance`), with the behaviour steps in
    `studio.behavior` and the acceptance criteria in `studio.criteria`.
