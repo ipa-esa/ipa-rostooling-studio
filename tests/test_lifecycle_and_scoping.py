@@ -330,3 +330,49 @@ def test_linter_semicolon_connections(tmp_path):
     assert "RM051" in rules, "Reverse direction must trigger RM051"
     assert "RM050" in rules, "Nonexistent endpoint must trigger RM050"
     assert "RM060" in rules, "3-element connection must trigger RM060"
+
+
+def test_linter_subsystem_connection_and_rm053_silencing(tmp_path):
+    # Sibling subsystem file
+    subsys_file = tmp_path / "sub_cell.rossystem"
+    subsys_file.write_text("""sub_cell:
+  fromFile: "sub_cell/launch/sub.launch.py"  # caller-supplied
+  nodes:
+    "broadcaster":
+      from: "broadcaster_pkg.broadcaster_node"  # project-local
+      interfaces:
+        - "/joint_states": pub-> "broadcaster::joint_states"
+""")
+
+    # Main system referencing subsystem with qualified connection and # generates launch comment
+    gen_sys = tmp_path / "app_system.rossystem"
+    gen_sys.write_text("""app_system: # generates launch
+  subSystems:
+    "sub_cell"
+  nodes:
+    "coordinator":
+      from: "coord_pkg.coordinator"  # project-local
+      interfaces:
+        - "joint_states": sub-> "coord_node::joint_states"
+  connections:
+    - [broadcaster::/joint_states, coordinator::joint_states]
+""")
+
+    linter = rosmodel_lint.Linter(str(gen_sys))
+    linter.run()
+    errors = [f for f in linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not errors, f"Subsystem connection produced errors: {errors}"
+    rm053_findings = [f for f in linter.findings if f.rule == "RM053"]
+    assert not rm053_findings, "RM053 must stay quiet for launch generator system"
+
+    # Verify RM053 still warns when no marker or launch file exists
+    plain_sys = tmp_path / "plain_system.rossystem"
+    plain_sys.write_text("""plain_system:
+  nodes:
+    "solo":
+      from: "solo_pkg.solo"  # project-local
+""")
+    linter_plain = rosmodel_lint.Linter(str(plain_sys))
+    linter_plain.run()
+    plain_rm053 = [f for f in linter_plain.findings if f.rule == "RM053"]
+    assert len(plain_rm053) == 1, "RM053 must fire when fromFile is absent and not a generator"

@@ -2719,13 +2719,14 @@ class Linter(object):
                            % ", ".join(ROSSYSTEM_TOP_KEYS))
 
         if "fromFile" not in present:
-            self.warn(node_line(sys_key), "RM053",
-                      "'fromFile:' is absent.",
-                      "Omitting it is corpus-normal (32/52 files) but trips a live bug: "
-                      "fromFileHelper dereferences system.fromFile.empty and "
-                      "system.fromFile.toString with no null guard, and the field defaults to "
-                      "null (SystemImpl.java:70). Always emit a quoted fromFile containing '/' "
-                      "(validator-rules.md sec 2.2).")
+            if not self.is_generating_system(sys_key.value, sys_key):
+                self.warn(node_line(sys_key), "RM053",
+                          "'fromFile:' is absent.",
+                          "Omitting it is corpus-normal (32/52 files) but trips a live bug: "
+                          "fromFileHelper dereferences system.fromFile.empty and "
+                          "system.fromFile.toString with no null guard, and the field defaults to "
+                          "null (SystemImpl.java:70). Always emit a quoted fromFile containing '/' "
+                          "(validator-rules.md sec 2.2).")
 
         if subsystems_val is not None:
             self.check_subsystems(subsystems_val, interfaces, node_names, local_from)
@@ -2745,6 +2746,42 @@ class Linter(object):
                             "RosSystem.xtext:13-45 is an alternation, so convention decides. "
                             "Observed corpus order is %s (emission-profile rule 25)."
                             % " -> ".join(ROSSYSTEM_TOP_KEYS))
+
+    def is_generating_system(self, sys_name, sys_key):
+        """Check if this system is meant to generate a launch file rather than reference an existing one."""
+        markers = (
+            "# generates launch",
+            "# generate launch",
+            "# generates_launch",
+            "# launch generator",
+            "# generates launch file",
+            "# target launch",
+            "# deployment system",
+        )
+        line_idx = node_line(sys_key) - 1
+        src_line = self.lines[line_idx] if 0 <= line_idx < len(self.lines) else ""
+        if any(marker in src_line.lower() for marker in markers):
+            return True
+
+        for line in self.lines[:5]:
+            if any(marker in line.lower() for marker in markers):
+                return True
+
+        if self.path:
+            model_dir = os.path.dirname(os.path.abspath(self.path))
+            ws_dir = os.path.dirname(model_dir)
+            candidates = [
+                os.path.join(ws_dir, "src-gen", sys_name, "launch", "%s.launch.py" % sys_name),
+                os.path.join(ws_dir, sys_name, "launch", "%s.launch.py" % sys_name),
+                os.path.join(ws_dir, "launch", "%s.launch.py" % sys_name),
+                os.path.join(model_dir, "src-gen", sys_name, "launch", "%s.launch.py" % sys_name),
+                os.path.join(model_dir, "..", "src-gen", sys_name, "launch", "%s.launch.py" % sys_name),
+            ]
+            for cand in candidates:
+                if os.path.isfile(cand):
+                    return True
+
+        return False
 
     def check_subsystems(self, node, interfaces, local_node_names, local_from):
         """Resolve each subSystems: entry against assets/node_index.json's system table and
@@ -2914,7 +2951,15 @@ class Linter(object):
 
                 for iface_name, kind in node_info["interfaces"].items():
                     interfaces.setdefault(iface_name, []).append(
-                        {"kind": kind, "line": line, "node": owner, "target": None})
+                        {
+                            "kind": kind,
+                            "line": line,
+                            "node": node_label,
+                            "subsystem": ref,
+                            "owner": owner,
+                            "target": None,
+                        }
+                    )
 
     def check_from_file(self, node):
         if not is_scalar(node):
@@ -3424,7 +3469,11 @@ class Linter(object):
             candidates = interfaces.get(iface_name, [])
             matched = [
                 c for c in candidates
-                if c["node"] == prefix or c["node"].endswith("." + prefix) or prefix.endswith("." + c["node"])
+                if (c["node"] == prefix
+                    or c.get("owner") == prefix
+                    or (c.get("subsystem") and "%s.%s" % (c["subsystem"], c["node"]) == prefix)
+                    or c["node"].endswith("." + prefix)
+                    or prefix.endswith("." + c["node"]))
             ]
             if matched:
                 return matched[0]
@@ -3434,7 +3483,7 @@ class Linter(object):
         if not candidates:
             return None
         if len(candidates) > 1:
-            owners = ", ".join(sorted(set(c["node"] for c in candidates)))
+            owners = ", ".join(sorted(set(c.get("owner", c["node"]) for c in candidates)))
             qualified_examples = ", ".join("'%s.%s'" % (c["node"], name) for c in candidates[:2])
             self.warn(node_line(node), "RM065",
                       "Connection '%s' endpoint '%s' is declared in %d nodes (%s)."
