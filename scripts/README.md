@@ -272,6 +272,7 @@ accepts both `'` and `"`, so the difference vanishes at parse time.
 | `RM067` | INFO | Uppercase in a `.rossystem` node **label** | house style only — no validator |
 | `RM096` | WARNING | Non-sentinel `fromFile:` with no `# caller-supplied` / `# on disk:` provenance comment on the same line (files under `assets/rosmodelscatalog/` exempt) | SKILL.md rule 5, added 2026-09-03 |
 | `RM097` | WARNING (INFO when all closed) | Items the extractors could not read that are still open — counts `# FLAG`/`# OPEN`/`# UNRESOLVED`, and reports them against the `# EXTRACTOR-FLAGS: N` stamp the scripts write, so the original count survives any rewording | SKILL.md "Converting real source" + §8e, self-check 18 |
+| `RM098` | ERROR | Launch substitution expression `$(...)` in a parameter value has unbalanced parentheses or an unknown substitution name | rossystem-syntax §5 |
 
 `RM051` enforces the only three legal pairings, with `from` always the server/publisher side:
 
@@ -646,8 +647,8 @@ the script appears in this README and vice versa, with no orphans in either dire
 
 ### Whole-corpus run — 336 files, 0 crashes
 
-**Re-measured 2026-08-14** against the current script. It emits **85** distinct ids -- RM000-RM097
-plus the `RM002B` and `RM008T` variants -- which is **84 rules**<!--@count:rules-->, RM000 being the internal
+**Re-measured 2026-08-14** against the current script. It emits **86** distinct ids -- RM000-RM098
+plus the `RM002B` and `RM008T` variants -- which is **85 rules**<!--@count:rules-->, RM000 being the internal
 read/parse failure rather than a rule. (RM094, the column-0 comment check, and the RM090/RM033
 severity corrections landed after this sweep and change none of its counts: no corpus file
 exhibits any of the three.) This supersedes the

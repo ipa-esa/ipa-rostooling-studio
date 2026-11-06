@@ -712,6 +712,14 @@ ROSSYSTEM_TOP_KEYS = [
     "connections",
 ]
 
+# ROS 2 Jazzy registered launch substitutions for $(...) parameter expressions.
+KNOWN_LAUNCH_SUBSTITUTIONS = {
+    "all", "and", "anon", "any", "command", "dirname", "env", "optenv",
+    "equals", "eval", "exec-in-pkg", "file-content", "filename", "find-exec",
+    "find-pkg-prefix", "find-pkg-share", "if", "launch_log_dir", "log_dir",
+    "not", "not-equals", "or", "param", "var",
+}
+
 # RosSystem.xtext:60-75 -- fixed member order for a RosNode (rule 22).
 ROSSYSTEM_NODE_KEYS = ["from", "namespace", "interfaces", "parameters"]
 
@@ -3314,6 +3322,34 @@ class Linter(object):
                            "terminal BOOLEAN is 'true'|'false' only (Basics.xtext:173). "
                            "Uppercase silently becomes a ParameterString "
                            "(emission-profile rule 18).")
+            elif is_scalar(value_node) and "$(" in value_node.value:
+                val_str = value_node.value
+                depth = 0
+                unbalanced = False
+                for c in val_str:
+                    if c == "(":
+                        depth += 1
+                    elif c == ")":
+                        depth -= 1
+                        if depth < 0:
+                            unbalanced = True
+                            break
+                if depth != 0:
+                    unbalanced = True
+                if unbalanced:
+                    self.error(node_line(value_node), "RM098",
+                               "Launch substitution in parameter '%s' has unbalanced parentheses: '%s'."
+                               % (key.value, val_str),
+                               "Launch substitution expressions $(...) must have balanced parentheses.")
+                else:
+                    for m in re.finditer(r"\$\(([a-zA-Z0-9_\-]+)", val_str):
+                        sub_name = m.group(1)
+                        if sub_name not in KNOWN_LAUNCH_SUBSTITUTIONS:
+                            self.error(node_line(value_node), "RM098",
+                                       "Unknown launch substitution '%s' in parameter '%s'."
+                                       % (sub_name, key.value),
+                                       "Allowed substitutions in ROS 2 Jazzy include: %s."
+                                       % ", ".join(sorted(KNOWN_LAUNCH_SUBSTITUTIONS)))
             elif (is_scalar(value_node) and is_quoted(value_node)
                   and re.match(r"^\s*[\[{].*[\]}]\s*$", value_node.value, re.S)):
                 self.error(node_line(value_node), "RM095",

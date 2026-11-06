@@ -435,6 +435,28 @@ diagnostics. **Author scalar values only** — Integer, Double, Boolean, String.
 > loses model content and is a far worse outcome than a non-deterministic diagnostic. Warn the
 > caller that `CheckParameterValue` may report unstable results for that parameter.
 
+### 5a. Launch-substitution parameter values
+
+RosTooling supports launch-time computed values via standard ROS 2 launch substitution strings in `ParameterString` values containing `$(`.
+
+```yaml
+      parameters:
+        - "robot_description": "revised_planning_server_node::robot_description"
+          value: "$(command 'xacro $(find-pkg-share simple_ur_cell_gazebo)/urdf/simple_ur_cell_tesseract.urdf.xacro')"
+        - "robot_description_semantic": "revised_planning_server_node::robot_description_semantic"
+          value: "$(command 'xacro $(find-pkg-share simple_ur_cell_moveit_config)/config/simple_ur_cell_tesseract.srdf.xacro')"
+        - "task_composer_config": "revised_planning_server_node::task_composer_config"
+          value: "$(find-pkg-share tesseract_planning)/task_composer/config/task_composer_plugins.yaml"
+```
+
+- **Syntax & Typing:** Strings only in v1 (`ParameterString` matching a `type: String` parameter in the `.ros2` model). If assigned to a non-String parameter, the language server emits a warning and the generator forces `value_type=str`.
+- **Validation:** Parentheses must be balanced, and substitution names must be registered ROS 2 launch substitutions (e.g. `command`, `find-pkg-share`, `find-pkg-prefix`, `find-exec`, `exec-in-pkg`, `env`, `optenv`, `var`). Unbalanced parentheses or unknown substitution names produce an ERROR (`RM098`).
+- **Generation:** The launch compiler wraps the expression in `ParameterValue(parse_substitution("<escaped>"), value_type=str)` inside node `parameters=[{...}]` and omits `DeclareLaunchArgument` so the expression evaluates at launch time.
+- **Never inline URDF or SRDF:** Reference them via `$(command 'xacro ...')` or `$(find-pkg-share ...)` to maintain clean model abstraction.
+- **Generating systems vs. subsystems:**
+  - A generating system (one that generates an application launch file) has **no `fromFile:`**.
+  - Sending-side connection labels must equal the real topic/action names because the generator remaps the receiving side to the sender's label.
+
 ## 5b. System-level `parameters:` — a different shape entirely
 
 The `System` production (§1) carries its own `('parameters:' BEGIN parameter+=Parameter* END)`.
