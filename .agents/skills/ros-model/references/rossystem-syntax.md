@@ -490,7 +490,7 @@ RosTopicConnection returns RosTopicConnection:
 ;
 ```
 
-**Emit only `RosSystemConnection`** — `- [label_a , label_b]` referencing local interface labels
+**Emit only `RosSystemConnection`** — `- [label_a , label_b]` or `- [label_a ; label_b]` referencing local interface labels
 (or qualified labels `<node>.<interface>` when multiple nodes declare identical interface names).
 
 Three separate validator methods (`checkIfInterfaceInSystem`, `checkPortPatterns`, `MatchPortMsgs`)
@@ -500,7 +500,7 @@ throws `ClassCastException` in all three. The grammar's own comment concedes the
 ### Scoping and Endpoint Disambiguation
 
 `RosSystemConnection` endpoints (`from` and `to`) reference declared `RosInterface` elements:
-`- [from_endpoint, to_endpoint]`
+`- [from_endpoint, to_endpoint]` or `- [from_endpoint; to_endpoint]` (a trailing semicolon `- [from; to];` is also accepted).
 
 The custom scoping provider (`RosSystemScopeProvider.xtend` and `RosSystemQNP.xtend`) supports two addressing formats:
 

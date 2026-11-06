@@ -124,11 +124,26 @@ def extract_rossystem_connections(sys_val):
     if not is_sequence(conn_seq):
         return out
     for item in conn_seq.value:
-        if not is_sequence(item) or len(item.value) != 2:
-            continue
-        a, b = item.value
-        if is_scalar(a) and is_scalar(b):
-            out.append([a.value, b.value])
+        if is_sequence(item) and len(item.value) == 2:
+            a, b = item.value
+            if is_scalar(a) and is_scalar(b):
+                out.append([a.value.strip().rstrip(";").strip("\"'"), b.value.strip().rstrip(";").strip("\"'")])
+        elif is_sequence(item) and len(item.value) == 1 and is_scalar(item.value[0]):
+            txt = item.value[0].value
+            for sep in (";", ","):
+                if sep in txt:
+                    pts = [p.strip().rstrip(";").strip("\"'") for p in txt.split(sep, 1)]
+                    if len(pts) == 2 and pts[0] and pts[1]:
+                        out.append([pts[0], pts[1]])
+                        break
+        elif is_scalar(item):
+            txt = item.value
+            for sep in (";", ","):
+                if sep in txt:
+                    pts = [p.strip().rstrip(";").strip("\"'") for p in txt.split(sep, 1)]
+                    if len(pts) == 2 and pts[0] and pts[1]:
+                        out.append([pts[0], pts[1]])
+                        break
     return out
 
 

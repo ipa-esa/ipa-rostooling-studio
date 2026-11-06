@@ -43,8 +43,8 @@ import rosmodel_lint as L  # noqa: E402
 import _studio_common as C  # noqa: E402
 
 
-# Malformed-connections fallback: `-[a,b]` / `- [a, b]`, possibly with no space after '-'.
-_CONN_SCALAR_RE = re.compile(r"-\s*\[\s*([^,\]]+?)\s*,\s*([^,\]]+?)\s*\]")
+# Malformed-connections fallback: `-[a,b]` / `- [a, b]` / `-[a;b]` / `- [a; b]`, with optional brackets/semicolons.
+_CONN_SCALAR_RE = re.compile(r"-\s*\[?\s*([^,;\]]+?)\s*[,;]\s*([^,;\]]+?)\s*\]?;?")
 
 # The seven interaction kinds we band/colour by. `param` is a pseudo-kind for the parameters
 # band; the six arrow kinds come straight from the grammar (RosSystem.xtext). Shared with
@@ -292,7 +292,23 @@ def extract_model(path, use_catalogue=True):
             if L.is_sequence(item) and len(item.value) == 2:
                 a, b = item.value
                 if L.is_scalar(a) and L.is_scalar(b):
-                    raw_pairs.append((_strip_quotes(a.value), _strip_quotes(b.value)))
+                    raw_pairs.append((_strip_quotes(a.value.rstrip(";")), _strip_quotes(b.value.rstrip(";"))))
+            elif L.is_sequence(item) and len(item.value) == 1 and L.is_scalar(item.value[0]):
+                txt = item.value[0].value
+                for sep in (";", ","):
+                    if sep in txt:
+                        pts = [_strip_quotes(p.strip().rstrip(";")) for p in txt.split(sep, 1)]
+                        if len(pts) == 2 and pts[0] and pts[1]:
+                            raw_pairs.append((pts[0], pts[1]))
+                            break
+            elif L.is_scalar(item):
+                txt = item.value
+                for sep in (";", ","):
+                    if sep in txt:
+                        pts = [_strip_quotes(p.strip().rstrip(";")) for p in txt.split(sep, 1)]
+                        if len(pts) == 2 and pts[0] and pts[1]:
+                            raw_pairs.append((pts[0], pts[1]))
+                            break
     elif L.is_scalar(conn_node):
         text = conn_node.value or ""
         matches = _CONN_SCALAR_RE.findall(text)

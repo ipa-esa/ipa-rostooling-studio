@@ -979,6 +979,11 @@ SUBSYSTEMS_KEY_RE = re.compile(r"^(?P<indent>[ \t]*)subSystems:[ \t]*(?:#.*)?$")
 # line, which is how a `subSystems:` block ends.
 SUBSYSTEMS_ENTRY_RE = re.compile(r"""^(?:"[^"]*"|'[^']*'|[^\s:#][^:#]*?)[ \t]*(?:#.*)?$""")
 
+CONNECTIONS_KEY_RE = re.compile(r"^(?P<indent>[ \t]*)connections:[ \t]*(?:#.*)?$")
+RE_CONN_LINE = re.compile(
+    r"""^(?P<lead>[ \t]*(?:-[ \t]*)?)\[?\s*(?P<a>"[^"]*"|'[^']*'|[^\s,;\]]+)\s*[,;]\s*(?P<b>"[^"]*"|'[^']*'|[^\s,;\]]+)\s*\]?\s*;?\s*$"""
+)
+
 
 def normalise_bare_subsystems(text):
     """Rewrite a MULTI-entry bare `subSystems:` block as a YAML block sequence, in memory.
@@ -1061,6 +1066,63 @@ def normalise_bare_subsystems(text):
                 synth.add(k + 1)
         i = max(j, i + 1)
     return "".join(out), synth
+
+
+def normalise_connections(text):
+    """Normalize connection entries in a `connections:` block in memory.
+
+    Accepts connections written with comma or semicolon delimiters and optional
+    trailing semicolons:
+      - Standard: `- [from, to]`
+      - Semicolon separator: `- [from; to]`, `- ["from"; "to"]`
+      - Unbracketed: `- from; to`, `- "from"; "to"`
+      - Trailing semicolon: `- [from, to];`, `- [from; to];`, `- from; to;`
+
+    Converts semicolon or unbracketed forms into the standard `- [from, to]` form
+    line-for-line before YAML composition, preserving comments and line numbers,
+    so PyYAML can parse them without failing on syntax or list shape errors.
+    """
+    lines = text.splitlines(True)
+    out = list(lines)
+    i = 0
+    while i < len(lines):
+        m = CONNECTIONS_KEY_RE.match(lines[i].rstrip("\r\n"))
+        if not m:
+            i += 1
+            continue
+        key_indent = len(m.group("indent").expandtabs(TAB_STOP))
+        j = i + 1
+        while j < len(lines):
+            raw = lines[j].rstrip("\r\n")
+            body = raw.strip()
+            if not body or body.startswith("#"):
+                j += 1
+                continue
+            stripped = raw.lstrip(" \t")
+            indent = len(raw[:len(raw) - len(stripped)].expandtabs(TAB_STOP))
+            if indent <= key_indent:
+                break
+            code, had_comment = ros_split_comment(raw)
+            comment_part = raw[len(code):] if had_comment else ""
+            conn_match = RE_CONN_LINE.match(code)
+            if conn_match:
+                if ";" in code or not (code.strip().startswith("-") and "[" in code and "]" in code):
+                    a = conn_match.group("a").strip()
+                    b = conn_match.group("b").strip()
+                    lead = conn_match.group("lead")
+                    if "-" not in lead:
+                        lead = lead.rstrip() + "  - " if lead else "    - "
+                    else:
+                        dash_idx = lead.find("-")
+                        lead_indent = lead[:dash_idx]
+                        lead = lead_indent + "- "
+                    if comment_part and not comment_part.startswith(" "):
+                        comment_part = " " + comment_part
+                    nl = "\r\n" if lines[j].endswith("\r\n") else "\n"
+                    out[j] = f"{lead}[{a}, {b}]{comment_part}{nl}"
+            j += 1
+        i = max(j, i + 1)
+    return "".join(out)
 
 
 def is_mapping(node):
@@ -1473,6 +1535,7 @@ class Linter(object):
         # The one multi-entry `subSystems:` form the grammar accepts is not composable YAML;
         # see normalise_bare_subsystems. Line-for-line, so the marks below stay the author's.
         source, self.synth_subsystem_lines = normalise_bare_subsystems(source)
+        source = normalise_connections(source)
 
         try:
             self.root = yaml.compose(io.StringIO(source))
@@ -3239,37 +3302,86 @@ class Linter(object):
         if not is_sequence(node):
             self.error(node_line(node), "RM060",
                        "'connections:' is not a list.",
-                       "Each connection is a list item: - [from_iface, to_iface] "
+                       "Each connection is a list item: - [from_iface, to_iface] or - [from_iface; to_iface] "
                        "(RosSystem.xtext:126-127).")
             return
 
         for item in node.value:
             line = node_line(item)
+            from_name = None
+            to_name = None
+            from_node = None
+            to_node = None
 
-            if not is_sequence(item):
+            if is_sequence(item):
+                if len(item.value) == 2:
+                    from_node, to_node = item.value
+                    if is_scalar(from_node) and is_scalar(to_node):
+                        from_name = from_node.value
+                        to_name = to_node.value
+                elif len(item.value) == 1 and is_scalar(item.value[0]):
+                    raw_val = item.value[0].value
+                    for sep in (";", ","):
+                        if sep in raw_val:
+                            parts = [p.strip().rstrip(";").strip("\"'") for p in raw_val.split(sep) if p.strip()]
+                            if len(parts) == 2:
+                                from_name, to_name = parts
+                                from_node = item.value[0]
+                                to_node = item.value[0]
+                                break
+                            elif len(parts) != 2:
+                                self.error(line, "RM060",
+                                           "Connection has %d elements; exactly 2 are required." % len(parts),
+                                           "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
+                                from_name = "__handled__"
+                                break
+                    if from_name is None:
+                        self.error(line, "RM060",
+                                   "Connection has %d elements; exactly 2 are required." % len(item.value),
+                                   "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
+                        continue
+                    elif from_name == "__handled__":
+                        continue
+                else:
+                    self.error(line, "RM060",
+                               "Connection has %d elements; exactly 2 are required."
+                               % len(item.value),
+                               "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
+                    continue
+            elif is_scalar(item):
+                raw_val = item.value
+                for sep in (";", ","):
+                    if sep in raw_val:
+                        parts = [p.strip().rstrip(";").strip("\"'") for p in raw_val.split(sep) if p.strip()]
+                        if len(parts) == 2:
+                            from_name, to_name = parts
+                            from_node = item
+                            to_node = item
+                            break
+                        elif len(parts) != 2:
+                            self.error(line, "RM060",
+                                       "Connection has %d elements; exactly 2 are required." % len(parts),
+                                       "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
+                            from_name = "__handled__"
+                            break
+                if from_name is None:
+                    self.error(line, "RM060",
+                               "Connection is not a two-element list.",
+                               "Emit only the RosSystemConnection form - [from_iface, to_iface] or - [from_iface; to_iface] referencing named RosInterface labels.")
+                    continue
+                elif from_name == "__handled__":
+                    continue
+            else:
                 self.error(line, "RM060",
                            "Connection is not a two-element list.",
-                           "Emit only the RosSystemConnection form - [from_iface, to_iface] "
-                           "referencing named RosInterface labels. The RosConnection branch "
-                           "(referencing ros::Publisher directly) triggers a ClassCastException "
-                           "in all three @Check methods, which cast unconditionally to "
-                           "RosSystemConnectionImpl (validator-rules.md sec 3.4).")
+                           "Emit only the RosSystemConnection form - [from_iface, to_iface] or - [from_iface; to_iface] referencing named RosInterface labels.")
                 continue
 
-            if len(item.value) != 2:
-                self.error(line, "RM060",
-                           "Connection has %d elements; exactly 2 are required."
-                           % len(item.value),
-                           "RosSystemConnection is '-' '[' from ',' to ']' "
-                           "(RosSystem.xtext:126-127).")
+            if from_name is None or to_name is None:
                 continue
 
-            from_node, to_node = item.value
-            if not (is_scalar(from_node) and is_scalar(to_node)):
-                continue
-
-            from_name = from_node.value
-            to_name = to_node.value
+            from_name = from_name.strip().rstrip(";").strip().strip("\"'")
+            to_name = to_name.strip().rstrip(";").strip().strip("\"'")
 
             from_iface = self.resolve_endpoint(interfaces, from_name, from_node, "from")
             to_iface = self.resolve_endpoint(interfaces, to_name, to_node, "to")

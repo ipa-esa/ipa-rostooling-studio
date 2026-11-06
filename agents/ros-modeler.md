@@ -52,7 +52,7 @@ These cause hard errors or silent semantic corruption. Never violate them.
    the validator compares object identity, not type names. Endpoints may be short interface names
    if unique across the system, or qualified as `<node>.<interface>` (or
    `<subsystem>.<node>.<interface>`) to disambiguate when multiple nodes declare identical
-   interface names.
+   interface names. Both comma and semicolon delimiters (`- [from, to]` and `- [from; to]`) are supported.
 9. `from:` in a `.rossystem` is `<packageName>.<nodeName>` — the **node**, never the artifact —
    read from the target model's contents, never from the `.ros2` filename (these differ in 76 of
    253 corpus files). In the same file, arrow and parameter targets are
@@ -87,7 +87,7 @@ non-deterministic diagnostics. Avoid `dependencies:`, `namespace:`, `ns:`, `proc
 `subSystems:` block) — `checkIfInterfaceInSystem` casts unconditionally to `RosNode` one level
 down, so two levels of nesting throws `ClassCastException` in the real validator (RM091 catches
 it). A single, flat `subSystems:` entry is fine and tested — see rule 12. Use only the
-`RosSystemConnection` form `- [from_iface , to_iface]`; the `RosConnection` branch throws
+`RosSystemConnection` form `- [from_iface , to_iface]` (or `- [from_iface ; to_iface]`); the `RosConnection` branch throws
 `ClassCastException` in three separate checks. Do not emit comments by default.
 
 ## Verification posture

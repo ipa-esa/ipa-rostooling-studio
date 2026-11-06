@@ -324,7 +324,7 @@ files contain tabs) — **do not imitate it.** Emit the normalised form.
 Both endpoints must resolve to the *same* spec object, so emit byte-identical `type:` strings on
 both ends.
 
-Use only the `RosSystemConnection` form, `- [from_label , to_label]`, referencing interface **labels
+Use only the `RosSystemConnection` form, `- [from_label , to_label]` (or with semicolon delimiter `- [from_label; to_label]`, with optional trailing `;`), referencing interface **labels
 declared in the same file** (or qualified as `<node>.<interface>` / `<subsystem>.<node>.<interface>`
 to disambiguate when multiple nodes declare identical interface names). The `RosConnection`
 alternative triggers a `ClassCastException` in three separate validator methods.

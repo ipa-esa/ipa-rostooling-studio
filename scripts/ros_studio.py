@@ -330,8 +330,8 @@ RE_EXPOSURE = re.compile(r'^-\s*(?P<k>"[^"]*"|\'[^\']*\'|[^\s:]+)\s*:\s*'
                          r'(?P<kind>pub|sub|ss|sc|as|ac)->')
 # `-[a, b]` with no space after the dash is legal DSL (whitespace is hidden) and 3 corpus files
 # write it that way, so the dash and the bracket are not required to be separated.
-RE_CONNECTION = re.compile(r'^-\s*\[\s*(?P<a>"[^"]*"|\'[^\']*\'|[^\s,\]]+)\s*,'
-                           r'\s*(?P<b>"[^"]*"|\'[^\']*\'|[^\s,\]]+)\s*\]')
+RE_CONNECTION = re.compile(r'^-\s*\[?\s*(?P<a>"[^"]*"|\'[^\']*\'|[^\s,;\]]+)\s*[,;]'
+                           r'\s*(?P<b>"[^"]*"|\'[^\']*\'|[^\s,;\]]+)\s*\]?;?')
 ROS2_ITEM_BLOCKS = set(C.KIND_TO_BLOCK.values()) | {"parameters"}
 # The five block keys a RosSystem may open (RosSystem.xtext:14-40). `parameters:` appears BOTH
 # here and inside a RosNode, and only the indent tells them apart.
@@ -528,8 +528,8 @@ def scan_rossystem_comments(path):
             continue
         m = RE_CONNECTION.match(body)
         if m and sect == "connections":
-            res["connections"][(ros_plot._strip_quotes(m.group("a")),
-                                ros_plot._strip_quotes(m.group("b")))] = {
+            res["connections"][(ros_plot._strip_quotes(m.group("a").rstrip(";")),
+                                ros_plot._strip_quotes(m.group("b").rstrip(";")))] = {
                 "before": pending, "line": note or ""}
             pending = []
             continue
