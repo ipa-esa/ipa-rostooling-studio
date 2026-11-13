@@ -7,7 +7,7 @@ description: Orchestrate end-to-end multi-node ROS 2 system implementations from
 
 Orchestrate the end-to-end development of a complete ROS 2 multi-node system defined by a `.rossystem` model and its accompanying `.ros2` package models.
 
-Building a multi-node robotic system (sensors, filters, controllers, planners, state machines) sequentially in a single chat conversation leads to severe context exhaustion and token bloat. This skill acts as the **lead system architect**, decomposing the system and orchestrating **parallel subagents** (one per custom node) using the [`ros-node-developer`](file:///home/adm-esa/coresense-ws/src/ipa-rostooling-studio/.agents/skills/ros-node-developer/SKILL.md) skill.
+Building a multi-node robotic system (sensors, filters, controllers, planners, state machines) sequentially in a single chat conversation leads to severe context exhaustion and token bloat. This skill acts as the **lead system architect**, decomposing the system and orchestrating **parallel subagents** (one per custom node) using the [`ros-node-developer`](../ros-node-developer/SKILL.md) skill. If any `.ros`, `.ros2`, or `.rossystem` model is missing or incomplete, author or update it via the `rostooling-mcp` semantic tools (`ros_add_spec`, `ros2_*`, `ros_*`) — never synthesize model DSL text by hand.
 
 ---
 
@@ -118,7 +118,7 @@ Once all subagents have reported successful implementation of their nodes:
    colcon build --symlink-install
    ```
 2. **System Graph Visualization (Optional)**:
-   Generate an interactive, standalone HTML architecture diagram using the [`ros-plot`](file:///home/adm-esa/coresense-ws/src/ipa-rostooling-studio/.agents/skills/ros-plot/SKILL.md) skill:
+   Export an auto-laid-out GLSP/ELK SVG directly from the Ecore model via MCP `export_system_diagram`, or generate an interactive standalone HTML architecture diagram using the [`ros-plot`](../ros-plot/SKILL.md) skill:
    ```bash
    python3 scripts/ros_plot.py path/to/my_robot.rossystem --out system_view.html
    ```
@@ -136,8 +136,9 @@ Once all subagents have reported successful implementation of their nodes:
 
 ## Pre-flight Checklist for Orchestrators
 
-- [ ] All participating `.ros2` models exist and validate cleanly (`rosmodel_lint.py` or MCP `validate_ros_model`).
+- [ ] All missing or updated `.ros`, `.ros2`, and `.rossystem` elements were created/edited through the `rostooling-mcp` semantic tools (`ros_add_spec`, `ros2_*`, `ros_*`), not hand-written as text.
+- [ ] All participating models validate cleanly with the Xtext server via MCP `validate_ros_model` (`"isValid": true`, `errorCount === 0`).
 - [ ] The `.rossystem` model uses consistent names matching the declared nodes and artifacts.
 - [ ] Subagents are instructed to use `ros-node-developer` and never edit wrapper files.
 - [ ] `generate_rossystem_code` is invoked *after* all node subagents complete.
-- [ ] Full integration build (`colcon build`) runs with zero compiler errors.
+- [ ] Full integration build (`colcon build` / `build_ros2_package`) runs with zero compiler errors.

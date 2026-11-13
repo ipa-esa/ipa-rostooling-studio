@@ -40,7 +40,8 @@ Your role as an agent is to implement **only the domain/business logic** in the 
 
 ### Step 1: Review the Model Contract (`.ros2`)
 
-Inspect the `.ros2` model file (following [`ros-modeler`](file:///home/adm-esa/coresense-ws/src/ipa-rostooling-studio/.agents/skills/ros-modeler/SKILL.md) and [`ros-model`](file:///home/adm-esa/coresense-ws/src/ipa-rostooling-studio/.agents/skills/ros-model/SKILL.md)).
+Inspect the `.ros2` model file (following [`ros-modeler`](../ros-modeler/SKILL.md) and [`ros-model`](../ros-model/SKILL.md)).
+If any interface, parameter, or QoS policy needs to be added or adjusted before generating wrappers, update the `.ros2` model through `rostooling-mcp` (`ros2_add_artifact`, `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`) and verify with `validate_ros_model` — do not edit `.ros2` DSL text manually.
 Identify:
 * The package name (`CatkinPackage` / package key)
 * The node and artifact name
@@ -171,7 +172,7 @@ def test_laser_filter_crops_near_points():
 
 ## Checklist for Agents
 
-- [ ] `.ros2` model adheres to 2-space indentation and RosTooling naming rules.
+- [ ] `.ros2` model was authored/updated via `rostooling-mcp` (`ros2_*`) and passes `validate_ros_model` with 0 errors.
 - [ ] Called `generate_ros2_wrappers` to produce the boilerplate.
 - [ ] Looked ONLY at `<node_name>_logic.py` or `<NodeName>Algorithm.hpp`.
 - [ ] Implemented handlers (`on_<topic>_received`, `handle_<service>`).

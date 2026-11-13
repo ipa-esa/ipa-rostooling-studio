@@ -3,17 +3,25 @@ name: ros-modeler
 description: Pre-flight checklist of the 12 rules that most often silently corrupt a RosTooling .ros2/.rossystem model (wrong quoting, wrong member order, silently-mistyped booleans/doubles, illegal nesting). Use immediately before emitting or editing such a file, IN ADDITION TO the `ros-model` skill, never instead of it — this is a checklist, not the specification.
 ---
 
-You author RosTooling DSL files for the Fraunhofer IPA ROS 2 modelling toolchain. Two file
-types are in scope: `.ros2` (an `AmentPackage` — one ROS package, its artifacts, nodes and
-interfaces) and `.rossystem` (a system composition wiring node instances together).
+You author RosTooling DSL files for the Fraunhofer IPA ROS 2 modelling toolchain. Three file
+types are in scope: `.ros` (`PackageSet` — message/service/action specs), `.ros2` (`AmentPackage` —
+one ROS package, its artifacts, nodes and interfaces), and `.rossystem` (a system composition
+wiring node instances or subsystems together).
 
-**Before emitting or editing anything, read `.agents/skills/ros-model/SKILL.md` and the files
-in its `references/` folder.** That skill carries the pinned grammar subset, the validator
-rule table and the normative emission profile; it is the authority for anything not restated
-here. This file is a pre-flight checklist of the rules most likely to silently corrupt a
-model, not a substitute for reading the specification. Do not reason from general ROS or YAML
-intuition — these grammars are indentation-sensitive Xtext grammars that only superficially
-resemble YAML.
+**Before authoring or editing anything, read `.agents/skills/ros-model/SKILL.md` and the files
+in its `references/` folder.** That skill carries the pinned grammar subset, the semantic MCP
+workflow, the validator rule table and the normative emission profile; it is the authority for
+anything not restated here. This file is a pre-flight checklist of the rules most likely to
+silently corrupt a model, not a substitute for reading the specification.
+
+**Author and modify every model through the `rostooling-mcp` semantic tools whenever the MCP server is connected — NEVER synthesize `.ros`, `.ros2`, or `.rossystem` text with `Write`/`Edit` and run `validate_ros_model` afterwards as a substitute.**
+- For `.ros` message/service/action specs: use `ros_add_spec`.
+- For `.ros2` package models: use `ros2_add_artifact`, `ros2_add_interface`, `ros2_add_parameter`,
+  `ros2_set_qos`, `ros2_set_property`, and `ros2_remove_element`.
+- For `.rossystem` compositions: use `ros_add_node` (supports `from_file`), `ros_add_subsystem`,
+  `ros_set_system_property`, `ros_connect_interfaces`, `ros_set_parameter`, `ros_add_process`,
+  `ros_remove_element`, and `export_system_diagram`.
+- Restrict manual text edits strictly to adding provenance / `# FLAG` comments (if required by the workflow) on top of MCP- or extractor-generated models, or offline fallback when no MCP server is connected. Treat rules 1–12 below as a guide for understanding and reviewing models — not permission to bypass MCP authoring.
 
 ## Non-negotiable rules
 
@@ -89,20 +97,18 @@ it). A single, flat `subSystems:` entry is fine and tested — see rule 12. Use 
 
 ## Verification posture
 
-`.ros2` files get a real but stale oracle — the shipped Xtext language server, pinned to a
-2024-08-01 build. If it is running, treat its diagnostics as authoritative for `.ros2` and fix
-what it reports.
-
-`.rossystem` has **no language server at all** — none was ever built. Its only check is
-`scripts/rosmodel_lint.py`, a modelled reimplementation of `RosSystemValidator`, not the real
-thing. In Claude Code that runs automatically after every write via a `PostToolUse` hook;
-nothing here re-runs it for you, so run it yourself
-(`"${ROSMODEL_PYTHON:-python3}" scripts/rosmodel_lint.py FILE...`) after writing or editing a
-model, and again after fixing anything it reports — a blocked check means the bad content is
-still on disk until a follow-up edit clears it.
-
-Never claim a file has been validated against the real toolchain unless you have actually seen
-diagnostics come back. Say "emitted per the pinned profile, not executed" instead.
+- **Always use the `rostooling-mcp` semantic tools + `validate_ros_model`.** `.ros`, `.ros2`, and
+  `.rossystem` models are authored and edited against the live RosTooling Java/Xtext GLSP server,
+  which mutates the Ecore AST, writes surgical span edits, and returns live Xtext diagnostics.
+- **`validate_ros_model` is the authoritative validator** for `.ros`, `.ros2`, and `.rossystem`
+  files (`"isValid": true` with `errorCount === 0` required). Always ensure referenced `.ros` and
+  `.ros2` dependencies sit in the workspace directory before validating.
+- **`scripts/rosmodel_lint.py` is secondary / offline only** (checking catalogue provenance `# ...`
+  comments and subsystem anti-patterns when offline or running `PostToolUse` hooks). Never treat
+  it as a replacement for semantic MCP authoring + `validate_ros_model`.
+- Never claim a file has been validated against the real toolchain unless `validate_ros_model` (or
+  live semantic MCP tool diagnostics) returned `errorCount === 0`. If no MCP server / Java 21
+  runtime is available, say `"emitted per the pinned profile, not executed by Xtext"` instead.
 
 ## Working style
 

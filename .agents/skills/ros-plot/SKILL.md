@@ -46,9 +46,6 @@ the right interpreter:
 
 ## Non-goals
 
-This skill does not lint or fix models — that is `scripts/rosmodel_lint.py`. In Claude Code
-that runs automatically on every write via a `PostToolUse` hook; nothing here re-runs it
-automatically, so run it yourself (`"${ROSMODEL_PYTHON:-python3}" scripts/rosmodel_lint.py
-FILE...`) if a model may have changed since it was last checked. This skill reads models and
-emits a view; it never edits a `.rossystem` file and never invents content that is not
-declared in it.
+This skill does not author, lint, or fix models:
+- Always author/edit models via the `rostooling-mcp` semantic tools (`ros_add_spec`, `ros2_*`, `ros_*`), validate via `validate_ros_model`, and use `export_system_diagram` (MCP) when you need the official server-rendered GLSP/ELK SVG.
+- `scripts/ros_plot.py` reads `.rossystem` files solely to render an interactive standalone HTML view (`ros-plot.html`); it never edits models or replaces `validate_ros_model`. (`scripts/rosmodel_lint.py` is only a secondary offline check when running without MCP.)

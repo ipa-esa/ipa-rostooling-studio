@@ -5,6 +5,14 @@ All notable changes to the **ipa-rostooling-studio** toolchain and skills will b
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-13
+
+### Changed
+- **Semantic MCP-First Agent Skills**:
+  - Updated `ros-model`, `ros-modeler`, `ros-system-builder`, `ros-node-developer`, and `ros-plot` under `.agents/skills/` (plus `skills/ros-model/SKILL.md`) to author and modify `.ros`, `.ros2`, and `.rossystem` models via `rostooling-mcp` (`ros_add_spec`, `ros2_*`, `ros_*`) rather than synthesizing DSL text and validating afterward.
+  - Designated `validate_ros_model` (backed by the Java Xtext language server) as the authoritative model validator and `rosmodel_lint.py` as secondary/offline provenance checking.
+  - Replaced machine-specific `file://` cross-skill links in `ros-system-builder` and `ros-node-developer` with portable relative paths.
+
 ## [0.2.1] - 2026-11-06
 
 ### Added

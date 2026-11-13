@@ -13,6 +13,14 @@ style nit.
 `$ARGUMENTS` is the target: a path to a ROS 2 package, or a bare system name (emit a
 `.rossystem`). If empty, ask which of the two the user wants before emitting anything.
 
+**`.rossystem` compositions are built through the RosTooling MCP tools, not typed out.** When the
+`rostooling-mcp` server is connected, every node, connection, parameter and process goes through
+`ros_add_node` / `ros_connect_interfaces` / `ros_set_parameter` / `ros_add_process` /
+`ros_remove_element` (see *Building a `.rossystem` with the semantic MCP tools*), and every model
+file is checked with `validate_ros_model`. The Java/Xtext server applies each change to the Ecore
+model and edits the file surgically; the hard rules below are what you check its output — and your
+few remaining hand edits — against.
+
 **When it is a path with source in it, start at "Converting real source" below — running the
 extractors is mandatory, not a shortcut.** One `.ros2` per *package*, named after the package it
 declares (see *Output layout*), not one per node.
@@ -104,16 +112,20 @@ each looking equally confident in the file.
 
 ```bash
 python ${CLAUDE_PLUGIN_ROOT}/scripts/extract_ros2_interfaces.py <src> \
-    -o <project>/rosnodes --emit-msgs <project>/msgs --json <project>/extraction_record.json
+    -o <project>/rosnodes --emit-msgs <project>/msgs --json <project>/extraction_record.json --no-lint
 
 python ${CLAUDE_PLUGIN_ROOT}/scripts/extract_rossystem.py <launch-file> \
-    --models <project>/rosnodes -o <project>/<system>.rossystem --json <project>/system_record.json
+    --models <project>/rosnodes -o <project>/<system>.rossystem --json <project>/system_record.json --no-lint
 ```
+
+Pass `--no-lint`: validation is `validate_ros_model`'s job (see *Validation*). The `.rossystem` the
+second script writes is the starting point — every further change to it goes through the semantic
+MCP tools.
 
 `${CLAUDE_PLUGIN_ROOT}` is set when the plugin is installed; working inside the plugin repo it is
 not, and the paths are simply `scripts/extract_ros2_interfaces.py` and
 `scripts/extract_rossystem.py` (or, after `pip install -e .`, the installed CLI entry points
-`extract-ros2-interfaces` and `extract-rossystem` alongside `rosmodel-lint`, `ros-studio`,
+`extract-ros2-interfaces` and `extract-rossystem` alongside `ros-studio`,
 `ros-plot`, and `coresense-studio`). If the first invocation fails with "No such file or
 directory", that is which case you are in — it is not a reason to skip the step.
 
@@ -127,10 +139,9 @@ to check it.** Your job is the remainder, and only the remainder.
 
 The scripts emit only what is literal and turn everything else into a `# FLAG` comment in the file
 header carrying `file:line` and the source expression. **A model that still contains `# FLAG` is
-not finished.** Every flag is one §8e decision. `rosmodel_lint.py` counts them as **`RM097`**
-(WARNING) so this does not rest on you remembering self-check 18 — but note that a flagged file
-is otherwise clean, and the real oracle ACCEPTS it, so RM097 is the *only* signal that anything
-is outstanding.
+not finished.** Every flag is one §8e decision. Count what is left with `grep -c '# FLAG' <file>`
+before handing anything over — a flagged file is otherwise clean and `validate_ros_model` reports
+0 errors for it, so the flag count is the *only* signal that anything is outstanding.
 
 **Delete a flag only when you have actually put the thing it describes into the model.** If you
 cannot resolve it, keep the marker (`# FLAG`, or reworded to `# OPEN`/`# UNRESOLVED`) and say so
@@ -215,7 +226,7 @@ down — before the first line of output — every construct the caller asked fo
 - each interface to expose, each parameter to set, each connection, each process
 
 Emit, then tick the list off against the file. A requested construct that is not in the file is a
-defect even when the file lints and validates clean — the linter cannot see the request. The only
+defect even when `validate_ros_model` reports it clean — the validator cannot see the request. The only
 legitimate reason to leave an asked-for construct out is a hard rule in this document, and then
 check 12 requires you to name the construct and the rule.
 
@@ -224,6 +235,53 @@ sentence and then spent sixty lines on five nodes and twenty-five parameters. Tw
 attempts emitted the five nodes perfectly and silently dropped the `subSystems:` block; the same
 reuse in a two-paragraph request that had nothing else to say was emitted every time. Busy requests
 lose their preamble.
+
+## Building a `.rossystem` with the semantic MCP tools — MANDATORY when connected
+
+The `rostooling-mcp` server exposes coordinate-free, semantic editing tools. Each one sends a
+GLSP operation to the RosTooling Java/Xtext server, which applies it to the Ecore model, writes
+only the affected spans of the file (comments and formatting elsewhere survive), re-parses it and
+returns the Xtext validation result. You never pass coordinates and no `.layout` file is needed —
+the diagram is laid out automatically.
+
+| Tool | Does | Key arguments |
+|---|---|---|
+| `ros_add_node` | adds a node instance; **creates the `.rossystem` if it does not exist** | `system_path`, `node_name`, `from` = `"<package>.<node>"` (§4b), optional `namespace`, `system_name` |
+| `ros_connect_interfaces` | connects two interfaces (pub/sub, service server/client, action server/client) | `from`, `to` as `"<node>.<interface>"` — order does not matter |
+| `ros_set_parameter` | sets a parameter value on a node instance | `node`, `parameter` (must be declared by the node type), `value`, optional `type_hint` |
+| `ros_add_process` | groups nodes into a process (composable container) or extends one | `process_name`, `nodes`, optional `threads` |
+| `ros_remove_element` | removes a node (with its connections), process, subsystem or connection | `element`, or `from` + `to` |
+| `export_system_diagram` | writes the auto-laid-out diagram as SVG and returns a structural summary | `system_path`, optional `output_path` |
+
+The loop, after the inventory of the previous section:
+
+1. Make sure every `.ros2`/`.ros` the system references is in the model's workspace (the system
+   file's directory tree, or staged there with `scripts/collect_deps.py`, §8c). The tools resolve
+   `from:` and message types through the Xtext workspace exactly like `validate_ros_model`.
+2. `ros_add_node` once per node, **in source order** (pass `system_name` on the first call). Each
+   result lists the instance's interfaces as ready-to-use `"<node>.<interface>"` refs and its
+   declared parameters — wire from those, never from memory. An unknown `from:` is refused.
+3. `ros_connect_interfaces` for every connection, `ros_set_parameter` for every parameter value,
+   `ros_add_process` for every process.
+4. Read every result. `"success": false` with an `"error"` field means **nothing was written** — fix
+   the call (the result lists the available interfaces/parameters). `"success": false` with a
+   non-empty `"errors"` list means the edit was applied but the model now has validation errors —
+   fix them before going on.
+5. Hand edits are limited to what no tool covers: `fromFile:` (rule 5), `subSystems:` (§8d) and the
+   provenance / `INFERRED` / `# FLAG` trailing comments (§8c, §8e). Later tool calls keep them.
+6. `validate_ros_model` on the finished file — the gate is `"isValid": true` with 0 errors — then
+   `export_system_diagram` when a diagram is wanted.
+
+What the server writes, so the self-check does not trip over it: interfaces are listed explicitly
+under each node in the order they were first connected; connection endpoints are node-qualified and
+quoted (`- [ "lidar::scan" , "detector::scan_in" ]`), which stays unambiguous when a second instance
+of the same node type is added later; publisher / server endpoints come first; parameters are
+written only for names the node type declares. Do not re-sort or re-quote tool output by hand.
+
+If `extract_rossystem.py` already produced the file from a launch file, keep it and make every
+further change with these tools. **Without a connected MCP server** you may write the file by hand
+following the rules below, and you must say in your report that it was not validated by the
+language server.
 
 ---
 
@@ -288,10 +346,10 @@ planner_server:            # the ROS 2 package name
 These are frequently the same string (as above), but they answer different questions and are
 **not interchangeable placeholders for each other** — never collapse them because they happen to
 match in a given package. Getting the wrong one into the wrong DSL position is exactly what rules
-4b, 6, and the RM014/RM056/RM062 lint checks exist to catch: `rossdl_cmake` (the actual launch-file
+4b and 6 exist to catch: `rossdl_cmake` (the actual launch-file
 generator this composition feeds) derives the node's runtime class from `from:`'s **node** segment
 and keys its remapping table on the **artifact**'s bare name, so confusing package ↔ artifact ↔
-node produces a `.rossystem` that lints and validates clean but generates a broken launch file —
+node produces a `.rossystem` that validates clean but generates a broken launch file —
 a defect this plugin cannot detect on its own, since it never runs `rossdl_cmake` itself.
 
 ### 3. Indentation
@@ -411,13 +469,13 @@ fromFile: "ur_bringup/launch/ur5e.launch.py"   # on disk: /abs/path/ur_bringup/l
 fromFile: "TODO_PACKAGE/launch/TODO.launch.py"
 ```
 
-The sentinel needs no comment (`RM066` already marks it). `RM096` warns when any other
-`fromFile:` has no provenance comment.
+The sentinel needs no comment (its `TODO_PACKAGE` path marks it). Every other `fromFile:`
+carries a provenance comment. No MCP tool sets `fromFile:`: add it by hand once the tools have
+created the file — later tool calls keep it.
 
 On rung 2, report the on-disk path you confirmed. On rung 3, report **SYNTHESISED — not extracted
 from the source, supplied only to avoid the `fromFileHelper` NPE** and, if you saw a candidate path
-somewhere that you rejected as not being rung 1 or rung 2 evidence, say where. The linter flags the
-sentinel as `RM066` (INFO) so it stays visible.
+somewhere that you rejected as not being rung 1 or rung 2 evidence, say where.
 
 ### 6. Node names: never quoted, restricted charset
 
@@ -431,7 +489,7 @@ attested in the corpus (`/light_controller`, `/cam_ns/cam_frame_controller`) —
 If `lease_duration:` / `lifespan:` / `deadline:` are ever unpinned, each value must be a **quoted**
 digit string parseable by `Integer.parseInt` (max `2147483647` ns ≈ 2.1 s — `"5000000000"` is an
 ERROR) or the bare keyword `infinite`. Under the current profile you never emit these fields at all
-(§ below), so this rule is documentation for a future oracle rebuild, not something to implement.
+(§ below), so this rule is documentation for a future toolchain change, not something to implement.
 
 ### 8. Silent-corruption traps in parameter values
 
@@ -448,8 +506,8 @@ ERROR) or the bare keyword `infinite`. Under the current profile you never emit 
   (`type:Array [String]` over `value: "['x', 'y']"`). **It is a source defect, not a style to
   preserve.** The declared type wins: when the referenced `.ros2` declares `Array[…]`/`List[…]`,
   or the caller wrote the value as a list, emit the real list and report the conversion under
-  check 12 ("source held the list as a quoted string; emitted as a list"). `RM095` flags the
-  string form in both file types.
+  check 12 ("source held the list as a quoted string; emitted as a list"). The language server rejects the
+  string form in a `.rossystem`.
 - Never emit an empty name `'':`.
 
 ### 8b. `.ros` message bodies — emit the FIELDS, not just the type name
@@ -512,11 +570,11 @@ service/action **type** specs, indexed in `assets/type_index.json`) and
 
 **Before emitting any `type:` reference**, resolve it against `assets/type_index.json`. If it
 resolves, use the catalogue's exact spelling (package name, kind, and Type all come from a real,
-oracle-shaped source, not memory). If it does not resolve, one of two things is true: the package
+catalogued source, not memory). If it does not resolve, one of two things is true: the package
 is genuinely project-local — emit a companion `.ros` defining it — or the reference was invented
-and must not be emitted. `rosmodel_lint.py`'s RM081 (WARNING, package not indexed at all — a
-project-local package is legitimate) and RM082 (ERROR, package indexed but this type isn't —
-this is a real typo, not a plausible gap) enforce this at lint time and suggest the nearest match.
+and must not be emitted. `validate_ros_model` reports an unresolved reference as a linking ERROR once the referenced
+`.ros` files sit in the model's workspace; when the package *is* in the catalogue but the type is
+not, look up the nearest real name there — that is a typo, not a plausible gap.
 
 **Before emitting any `.rossystem` `from:` or arrow/parameter target**, resolve it the same way
 against `assets/node_index.json`. This is exactly the mistake that shipped in an earlier
@@ -524,22 +582,22 @@ revision of a TurtleBot 2 navigation example model (`turtlebot2_navigation.rossy
 bt_navigator`, `nav2_planner.planner_server` and `nav2_controller.controller_server` were all
 invented from general Nav2 knowledge with a plausible `nav2_`-style prefix — the real catalogue
 names are `amcl.amcl`, `bt_navigator.bt_navigator`, `planner_server.planner_server`,
-`controller_server.controller_server`, no prefix. `rosmodel_lint.py`'s RM084 (WARNING, `from:`
-package not indexed — project-local nodes are legitimate), RM085 (ERROR, package indexed but node
-name isn't) and RM086 (ERROR, arrow/parameter target resolves to a catalogued node but that
-interface name isn't among its real interfaces) enforce this the same way.
+`controller_server.controller_server`, no prefix. `ros_add_node` refuses a `from:` that does not
+resolve to a node of a `.ros2` in the workspace, `ros_connect_interfaces` / `ros_set_parameter`
+only accept interfaces and parameters the node type really declares, and `validate_ros_model`
+reports anything that slipped in by hand as a linking ERROR.
 
 **TurtleBot 2 / Kobuki is not in `assets/rosmodelscatalog/` at all** — only TurtleBot 3 is. A
 reference to a Kobuki-specific package will always miss the catalogue; that is a known scope
 limit of the vendored catalogue, not a defect to fix by guessing a plausible package name for it.
 
-Once a reference resolves, `rosmodel_lint.py` reports which vendored file supplies it (RM083 for
-types, RM087 for nodes) — pass the model straight to `scripts/collect_deps.py <file>... <dir>` to
-stage exactly those files into an oracle case directory, instead of hand-copying `_deps/` files
-and guessing which ones apply.
+Once a reference resolves, pass the model straight to `scripts/collect_deps.py <file>... <dir>`
+to stage exactly the vendored files it needs beside it — the MCP tools and `validate_ros_model`
+resolve references through the model's workspace — instead of hand-copying `_deps/` files and
+guessing which ones apply.
 
 **Disclose the resolved file inline, on the same line as the reference — not only in a header
-comment.** A reader looking at one `"from:"` line should not have to run the linter, open
+comment.** A reader looking at one `"from:"` line should not have to open
 `assets/node_index.json`, or scroll to a file-level summary comment to find out which real file
 backs it. This matters concretely: a `.rossystem` can reference nine nodes where seven resolve to
 pre-existing catalogue files nobody in this session wrote, and two resolve to files freshly
@@ -554,9 +612,8 @@ unless each line says which one it is. Add a trailing comment naming the exact v
 For a project-local node with no catalogue entry, say so instead, e.g. `# project-local, see
 rosnodes/turtlebot3_mission_manager.ros2` — the point is that every `from:` line states in-place
 whether it points at a real vendored file (and which one) or a companion file this session wrote.
-`rosmodel_lint.py`'s RM088 (node `from:`) and RM089 (`type:` refs) check this mechanically: they
-fire a WARNING when a reference resolves against the catalogue but the source line's text doesn't
-contain the resolved file's name.
+The MCP tools write no comments, but they edit surgically, so a provenance comment you add to a
+tool-written `from:` line survives every later tool call. Nothing checks these comments for you.
 
 ### 8d. Reuse a whole pre-built system via `subSystems:` — emit it when asked; the exposure check governs wiring, not whether to emit
 
@@ -574,10 +631,10 @@ no leading `-`. `subSystems: ["turtlebot"]` is a parse error.
 
 **If the caller says a composition exists elsewhere and asks to reuse it, emit the entry** — even
 when the target is not among `assets/node_index.json`'s `_systems` and no `<name>.rossystem` sits
-beside the file. An unresolved entry is RM091 (WARNING, "does not resolve"), which is the correct,
+beside the file. An unresolved entry (a linking diagnostic from `validate_ros_model`) is the correct,
 *disclosed* outcome for a project-local system kept elsewhere: say so in your report. Omitting the
-entry instead silently changes what the deployment brings up, and nothing — not the linter, not
-the oracle — can detect it. The exposure check below decides whether a node *inside* the subsystem
+entry instead silently changes what the deployment brings up, and nothing — not the validator — can
+detect it. The exposure check below decides whether a node *inside* the subsystem
 can be a `connections:` endpoint; it never decides whether the subsystem is referenced at all.
 
 **Before wiring a connection *through* a subsystem, check what it actually exposes.** A subsystem's
@@ -590,13 +647,13 @@ system's components and reads `rosnode.rosinterfaces` — populated only from th
 - `assets/rosmodelscatalog/robots/turtlebot3/robot/turtlebot.rossystem` declares real
   `interfaces:` on all three of its nodes (`cmd_vel`, `tf`, `odom`, `scan`, `joint_states`,
   `tf_static`) — genuinely reusable. Referencing it exposes those bare labels directly as
-  `connections:` endpoints (confirmed against the real oracle — no re-suffixing, no artifact
+  `connections:` endpoints (confirmed against the language server — no re-suffixing, no artifact
   prefix, just the subsystem's own label text).
 - `assets/rosmodelscatalog/robots/turtlebot3/turtlebot3_navigation2.rossystem` (the Nav2 stack)
   declares **zero** `interfaces:` on any of its 14 nodes. Referencing it via `subSystems:` is
   grammatically valid and resolves, but exposes nothing — none of its nodes can be a
   `connections:` endpoint through it. If a node from a subsystem like this needs external
-  wiring, **declare that one node explicitly under `nodes:` as well** (and mind RM090 — if the
+  wiring, **declare that one node explicitly under `nodes:` as well** (and mind the duplicate-label rule below — if the
   same label is then reachable both ways, keep the explicit node and say in a comment why the
   subsystem does not supply it), so a future pass doesn't "simplify" it into a broken
   `subSystems:` reference. This is not a failure to reuse — the reference genuinely offers nothing
@@ -609,11 +666,10 @@ anything: an entry with every node's `"interfaces": {}` is the zero-exposure cas
 **Never let one real node be reachable two ways in the same file** — directly under this file's
 own `nodes:` **and** through a `subSystems:` entry that also provides it. Two distinct `RosNode`
 objects then answer to the same label, which is the concrete shape of "duplicate model
-definitions confusing the validator." `rosmodel_lint.py`'s RM090 (ERROR) catches the exact-label
-collision; RM092 (WARNING) catches the softer case of the same `from:` reachable under two
-different labels. RM091 (WARNING) covers a `subSystems:` entry that doesn't resolve at all, nests
-another `subSystems:` block (two levels deep throws `ClassCastException` in the real validator —
-keep nesting flat), or resolves but exposes zero interfaces, as above.
+definitions confusing the validator." No tool flags this: check both
+the exact-label collision and the softer case of the same `from:` reachable under two different
+labels yourself. Keep `subSystems:` nesting flat — a referenced system that itself has
+`subSystems:` (two levels deep) throws `ClassCastException` in the real validator.
 
 ### 8e. When an interface name or message type isn't literal in the source: trace it, infer it from a cited convention, or ask — never a silent guess, never a silent drop
 
@@ -627,7 +683,7 @@ with work. It never licenses inventing a `connections:` block (§4), a `fromFile
 catalogue reference that does not resolve (§8c) — a type you infer here must still resolve against
 `assets/type_index.json` or come with a companion `.ros`, and a node/package name is never inferred
 by convention at all. QoS fields and parameter values are out of scope: never infer either. Emit
-only what the source states, and let the Pinned-oracle exclusion section's defaults stand.
+only what the source states, and let the Pinned-profile exclusion section's defaults stand.
 
 **When the source was extracted (see "Converting real source"), your worklist is exactly the
 script's `# FLAG` comments** — the literal cases are already emitted and cited, so every remaining
@@ -644,7 +700,7 @@ Typical uses:
 Rules:
 1. **Never inline URDF or SRDF:** Reference them via `$(command 'xacro ...')` or `$(find-pkg-share ...)` to maintain model abstraction.
 2. **String-only in v1:** The parameter must be `type: String`. If assigned to a non-String parameter, a warning is emitted and `value_type=str` is forced.
-3. **Syntax validation:** Parentheses must be balanced, and substitution names must be registered in ROS 2 launch frontend (`RM098`).
+3. **Syntax validation:** Parentheses must be balanced, and substitution names must be registered in ROS 2 launch frontend.
 4. **Generating system vs subsystem:**
    - A generating system (one that generates an application launch file) has **no `fromFile:`**.
    - Sending-side connection labels must equal the real topic/action names because the generator remaps the receiving side to the sender's label.
@@ -683,14 +739,14 @@ with "what ROS projects usually do" is not a basis. Two further gates, both hard
 - exactly one candidate must survive. If two types are each plausible, this is case 3.
 
 Mark it in place. §8c already claims the trailing comment on that line, so **merge the two into one
-comment** — provenance first so RM089 still sees the resolved filename:
+comment** — provenance first, so the resolved filename stays at the start:
 
 ```
 'cmd_vel':
   type: 'geometry_msgs/msg/Twist' # assets/roscommonobjects/geometry_msgs.ros — INFERRED from the topic name (REP-119), no type in source; confirm
 ```
 
-Keep it a trailing comment: a full-line comment at column 0 ends the model (RM094).
+Keep it a trailing comment: a full-line comment at column 0 ends the model (`missing EOF`).
 
 **3. Neither applies.** No trace resolves it and no single basis picks one answer. Before you may
 use this case you must have actually looked: grepped the symbol across the package, checked the
@@ -764,12 +820,13 @@ labels unique within a node (`sub_clock` when `clock` is already taken by a publ
 | `.rossystem` interface labels within a node | **sort alphabetically**, grouped by kind |
 | `.rossystem` `nodes:` | **preserve source order** — it often encodes bring-up sequence |
 
-`rosmodel_lint.py` matches this split: `RM040` fires on unsorted `.ros2` blocks and deliberately
-does **not** fire on a `.rossystem` `nodes:` block.
+A `.rossystem` built with the MCP tools follows the same split where it can: nodes appear in the
+order you added them (add them in source order), and each node's interfaces in the order they were
+first connected — leave the tool's order as it is rather than re-sorting it by hand.
 
 ---
 
-## Pinned-oracle exclusion
+## Pinned-profile exclusion
 
 **Updated 2026-07-21 — this restriction has been lifted.** It previously said *never emit* the four
 newer QoS fields, because our only validator was a JAR built 2024-08-01, predating them. We rebuilt
@@ -823,8 +880,8 @@ Run every line against the emitted file:
 6. `lease_duration` / `liveliness` / `lifespan` / `deadline` are **legal** — emit them when the
    source has them (the restriction was lifted 2026-07-21; see §11). Never delete one to satisfy
    this checklist: that would drop a concrete value the source carried. Two value rules do apply:
-   a duration is a nanosecond string and must be under ~2.147 s (`Integer.parseInt`, RM035), and
-   `liveliness:` is `automatic` or `manual`, bare — any other value is a parse error (RM033).
+   a duration is a nanosecond string and must be under ~2.147 s (`Integer.parseInt`), and
+   `liveliness:` is `automatic` or `manual`, bare — any other value is a parse error.
 7. Booleans lowercase; every `.ros2` `Double` value has a `.` or exponent. In a `.rossystem` the
    declared type is not on the line — open the referenced `.ros2` and read it
    (`references/rossystem-syntax.md` §5). Preserve the source literal only for scalars whose type
@@ -836,7 +893,8 @@ Run every line against the emitted file:
    things — the caller's verbatim value, a `Glob`-confirmed on-disk launch file, or the sentinel —
    with the rung stated in a trailing comment. Anything else is fabricated: replace it with the
    sentinel. Every connection is `- [a , b]` where `a` is a `pub->`/`ss->`/`as->` label and `b` is
-   the matching `sub->`/`sc->`/`ac->` label. Both `type:` strings identical. Every label declared
+   the matching `sub->`/`sc->`/`ac->` label — node-qualified and quoted (`"node::label"`) as
+   `ros_connect_interfaces` writes them; a bare label only where it is unique in the system. Both `type:` strings identical. Every label declared
    in this file. Every node in a process's `nodes: [...]` declared in `nodes:`.
 10. `from:` in `.rossystem` is `<packageName>.<nodeName>` — **the node, never the artifact** — read
     from the **model contents**, never from the `.ros2` filename (76/253 files have a stem that
@@ -855,7 +913,7 @@ Run every line against the emitted file:
     you *converted* rather than preserved (a list held as a quoted string is always converted, not
     preserved — see §8); any construct the request asked for — subsystem, node, interface,
     parameter, connection — that you did not emit, and which rule excluded it. Silence about these
-    is the failure mode — none of them is visible to the linter or the harness.
+    is the failure mode — none of them is visible to the validator or the harness.
 13. Every `type:` reference resolves against `assets/type_index.json`, and every `.rossystem`
     `from:`/arrow/parameter target resolves against `assets/node_index.json` — or is a genuine,
     disclosed project-local reference with its own companion `.ros`/`.ros2`. See §8c.
@@ -863,7 +921,7 @@ Run every line against the emitted file:
     comment on the same line (`# assets/rosmodelscatalog/navigation/amcl.ros2`), and every
     project-local one says so and points at its companion file instead. See §8c.
 15. If the request named a pre-built composition to reuse, a `subSystems:` block naming it is
-    present — unresolved is acceptable (RM091 WARNING, disclosed in the report); absent is not.
+    present — unresolved is acceptable (disclosed in the report); absent is not.
     Every entry is the bare-per-line form, never `[...]`. Before routing a *connection* through a
     subsystem, confirmed via `assets/node_index.json`'s `_systems` entries that the target
     declares `interfaces:` on the node you need; if it declares none, that node also needs an
@@ -885,73 +943,46 @@ Run every line against the emitted file:
     place** — rewrite the text if you like, but keep it starting `# FLAG`, `# OPEN` or
     `# UNRESOLVED` — and name it in the report. Rewording a flag into prose makes a model with
     known holes look finished, and it is the one failure mode nothing else catches: such a file
-    lints clean and the real oracle ACCEPTS it. The `# EXTRACTOR-FLAGS: N` line the scripts write
-    is a record of how many there were; do not edit it. `RM097` reports it against how many are
-    still open. `# DROPPED`/`# NOTE`/`# CAUTION` are the scripts' disclosures of things the DSL
+    validates with 0 errors. The `# EXTRACTOR-FLAGS: N` line the scripts write
+    is a record of how many there were; do not edit it. Compare it with `grep -c '# FLAG'` for how
+    many are still open. `# DROPPED`/`# NOTE`/`# CAUTION` are the scripts' disclosures of things the DSL
     cannot express, not a worklist: leave them in place.
 19. **The extractors were run**, per "Converting real source", or the report names which of the two
     exemptions applied (no source on disk / missing dependencies, saying which packages were
     therefore read by hand). Anything the scripts emitted is unchanged unless a §8e resolution
     required editing that exact line.
+20. **Built and validated with the toolchain.** Every `.rossystem` node, connection, parameter and
+    process went through the semantic MCP tools (or the report says no MCP server was connected),
+    and `validate_ros_model` returned `"isValid": true` for every file you wrote, with its
+    dependencies in the workspace. No `.layout` file and no coordinates were produced.
 
 ## Validation
 
-- **The extractors run the linter themselves** on everything they write, so a file that came out of
-  `extract_ros2_interfaces.py` / `extract_rossystem.py` has already passed it once. Re-run it after
-  your §8e edits — those are hand edits like any other.
-
-- **Static linter** (always available): `${CLAUDE_PLUGIN_ROOT}/scripts/rosmodel_lint.py` (or
-  `rosmodel-lint` when installed via `pip install -e .`). Checks everything above that is decidable
-  in one file, consulting shared `~/.rostooling/catalogue_repos/` models (or
-  `ROSMODEL_CATALOGUE_DIR`) when synced and falling back to `assets/type_index.json` and
-  `assets/node_index.json`.
-
-  ```
-  rosmodel-lint <file>...
-  python scripts/rosmodel_lint.py <file>...
-  ```
-
-  On Windows under the Bash tool, bare `python` is the Microsoft Store stub and exits non-zero —
-  use `py -3` there. Accepts **`.ros`, `.ros2` and `.rossystem`**. (`.ros` support was added
-  2026-07-21; older notes saying `.ros` is rejected with `RM000` are stale.) The `.ros` branch does
-  not use YAML — it runs its own indentation-stack parser, so it reads message field lines
-  correctly and never rejects a file merely for irregular indentation.
-
-  **`RM034` (`profile:` / `history:` / `depth:` used) is expected and correct when the value came
-  from the input.** It warns against *inventing* those fields, not against transcribing them.
-  Never drop a concrete value that was present in the source in order to get a clean linter run.
-
-  **`RM095`/`RM096` (added 2026-09-03) close two gaps a live validation round found.** `RM095`
-  (ERROR in `.rossystem`, WARNING in `.ros2`) fires on a parameter value that is a quoted string
-  shaped like a list (`value: "['a', 'b']"`) — see §8's Lists bullet; this is a real oracle
-  rejection, not a style nit, so it is wired into the `--hook` PostToolUse gate. `RM096`
-  (WARNING) fires on a non-sentinel `fromFile:` with no `# caller-supplied` / `# on disk:`
-  provenance comment (files under `assets/rosmodelscatalog/` are exempt) — see rule 5. **`RM061`
-  (`subSystems:` used) was demoted from WARNING to INFO in the same pass** — its presence was
-  never itself a defect, and the old WARNING read as a third nudge toward omitting a subsystem
-  the caller actually asked to reuse; see the "Before emitting: inventory the request" section
-  and §8d.
-
-  **RM081-092 are the catalogue checks** (§8c, §8d) — RM081/084 (WARNING: reference not indexed
-  at all, a project-local package/node is legitimate) and RM082/085/086 (ERROR: the package/node
-  *is* indexed but this specific type/node/interface name isn't — a real typo, with a
-  suggested nearest match) run automatically whenever `assets/type_index.json` /
-  `assets/node_index.json` exist. Pass `--no-catalogue` to suppress them in a workspace whose
-  references are heavily project-local. RM083/RM087 name exactly which vendored file a
-  resolved reference needs — feed the model straight to `scripts/collect_deps.py <file>...
-  <case-dir>` instead of hand-copying `_deps/` files (this also stages any resolved
-  `subSystems:` target and follows its own references transitively). RM088/RM089 (WARNING) fire
-  when a reference resolves against the catalogue but its source line doesn't name the resolved
-  file — add the trailing comment they suggest. RM090 (ERROR)/RM091/RM092 (WARNING) are the
-  `subSystems:` reuse checks from §8d: a node reachable both directly and through a subsystem, an
-  unresolved/nested/zero-interface subsystem reference, and a same-`from:`-different-label pair.
-  RM093 is a separate, non-catalogue grammar check (`--no-catalogue` does not suppress it), and
-  it is an **ERROR** on both illegal forms: the bracket list `subSystems: [...]` and the `- item`
-  block sequence, at any number of entries. `components+=SubSystem*` is a repetition, not a list
-  production: **N references are N bare lines**, and the dash form is a syntax error
-  (`mismatched input '-' expecting RULE_END`). Settled 2026-08-14 against the 3.1.0 server —
-  oracle cases `17-subsystems-multi` (two bare lines, ACCEPTED 0E/0W) and
-  `18-neg-subsystems-dash` (REJECTED). Write:
+- **`validate_ros_model` is the validator.** It runs the RosTooling Xtext language server — the
+  toolchain itself, not a reimplementation — over `.ros`, `.ros2` and `.rossystem` files and returns
+  every syntax, linking and validator diagnostic. `"isValid": true` with `"errorCount": 0` is the
+  only passing result. Report a file as validated only if you actually ran it on that file.
+- **Supply the dependencies.** A file is only clean when every `type:` / `from:` / arrow reference
+  resolves, and unresolved references are linking **ERRORs**, not warnings. Keep each model's
+  `.ros` / `.ros2` dependencies in its directory (stage vendored ones with
+  `scripts/collect_deps.py <file>... <dir>`, §8c); validating a file in isolation always shows
+  errors.
+- **Run it after every hand edit** (and after the extractors: run them with `--no-lint` and
+  validate their output with `validate_ros_model`). The semantic `.rossystem` tools already return
+  the server's diagnostics with each call, but finish with one explicit `validate_ros_model` run.
+- **0 errors is necessary, not sufficient.** A draft still carrying `# FLAG` comments validates
+  clean — every automated signal says "done" while the model has known holes. Count them with
+  `grep -c '# FLAG' <file>`: a non-zero count is not finished unless every surviving flag is named
+  in your report with the reason it stays (§8e case 3). The validator also cannot see the request:
+  the inventory check (self-check 16) is yours.
+- **PREREQUISITE: a Java 21 runtime.** The server JAR is Java 21 bytecode; on Java 11 or 8 it fails
+  with `UnsupportedClassVersionError` before validating anything. Check with `java -version`; if it
+  is older, put a JDK 21 on `PATH` or point `ROSMODEL_JAVA` at one. **If no Java 21 is available,
+  say so in your report and describe the model as unvalidated.**
+- Grammar facts the validator enforces that are easy to get wrong by hand:
+  `components+=SubSystem*` is a repetition, not a list — **N subsystem references are N bare
+  lines**; the bracket form `subSystems: [...]` and the `- item` form are syntax errors
+  (`mismatched input '-' expecting RULE_END`):
 
   ```
   subSystems:
@@ -959,73 +990,27 @@ Run every line against the emitted file:
     "extra"
   ```
 
-  Two consequences worth carrying: this is the one legal form that **`yaml.safe_load` cannot
-  read** (two consecutive scalars do not compose; unquoted ones fold into a single scalar), so a
-  YAML-based consumer such as `rossdl` cannot load a multi-entry model at all — flag it, do not
-  try to write around it. And a full-line comment at **column 0** anywhere inside an indented
-  block ends the model (`missing EOF`, RM094): indent every comment to the block it annotates.
-
-- **Round-trip harness**: `tests/roundtrip.py`, which compares two models semantically rather than
-  byte-wise (corpus formatting is far too inconsistent for byte-diffing to mean anything).
-
-  ```
-  python tests/roundtrip.py compare <original> <regenerated>
-  ```
-
-  The `compare` subcommand is **required** — `roundtrip.py <a> <b>` is an argparse error.
-  `compare` exits 1 on any semantic difference, including the deviations this skill *mandates*
-  (an added `fromFile:`, a renamed duplicate node label). Read the diff; a non-zero exit is not by
-  itself a failure.
-- **Real oracle — PREREQUISITE: a Java 21 runtime.** The language-server jars are Java 21
-  bytecode; on Java 11 or 8 they fail with `UnsupportedClassVersionError` before validating
-  anything. Check with `java -version`, and if it is older, either put a JDK 21 on `PATH` or point
-  `ROSMODEL_JAVA` at one. **If no Java 21 is available, say so in your report and describe the
-  model as linter-checked only** — do not present it as oracle-validated. (An earlier revision of
-  this file asserted "Java 21 is installed" as a fact; that was true of one machine and is not a
-  property of the toolchain.) With that in place,
-  `tests/oracle/ask_oracle.py` drives the actual RosTooling language servers over stdio:
-
-  ```
-  py tests/oracle/ask_oracle.py <case-dir>      # one directory = one LSP workspace
-  py tests/oracle/ask_oracle.py --all           # the whole regression suite
-  ```
-
-  Put the file under test in a directory together with every `.ros` it depends on, and read the
-  verdict. `ACCEPTED` with 0 errors is the only passing result.
-
-  **`ACCEPTED` is necessary, not sufficient.** A draft still carrying `# FLAG` comments is
-  ACCEPTED by the oracle and clean in the linter apart from `RM097` — every automated signal
-  says "done" while the model has known holes. **A model with a non-zero `RM097` is not
-  finished** unless every surviving flag is named in your report with the reason it stays
-  (§8e case 3). Do not read "0 errors" as a licence to hand it over; check `RM097` too.
-
-  **The shipped `ros2` JAR registers `RosIdeSetup` and `BasicsIdeSetup` as well as `Ros2IdeSetup`,
-  so it validates `.ros` files too** — not just `.ros2`. A `.rossystem` server has now been built
-  locally as well (`build/rossystem-ls/`), so all three file types have an oracle.
-
-  **A `.ros2` is only clean when every `type:` it references resolves.** Unresolved references are
-  **ERRORs** (they fail in Xtext's linking layer, before the validator runs), not warnings.
-  Validating one file in isolation will always show errors — always supply the `.ros` dependencies.
-
-- **The oracle is the rebuilt 3.1.0-SNAPSHOT server**, one unified binary for `.ros`, `.ros2`
-  and `.rossystem`, and it validates the current language — including the four QoS fields above,
-  which is why they are no longer excluded. The 2024-08-01 JAR is still reachable as
-  `ROSMODEL_ORACLE=legacy` for A/B work: it is what a *consumer* on an older build sees, and the
-  difference is exactly what RM031 reports at INFO.
-
-- **When the linter and the oracle disagree, the oracle wins.** The linter is a reimplementation;
-  the oracle is the toolchain. Report a file as validated only if you actually ran it.
+  This is the one legal form that **`yaml.safe_load` cannot read**, so a YAML-based consumer such
+  as `rossdl` cannot load a multi-entry model at all — flag it, do not try to write around it. And a
+  full-line comment at **column 0** anywhere inside an indented block ends the model
+  (`missing EOF`): indent every comment to the block it annotates.
+- **Round-trip harness** (transcriptions only): `python tests/roundtrip.py compare <original>
+  <regenerated>` compares two models semantically rather than byte-wise. The `compare` subcommand
+  is required, and it exits 1 on any semantic difference, including the deviations this skill
+  *mandates* (an added `fromFile:`, a renamed duplicate node label) — read the diff; a non-zero
+  exit is not by itself a failure.
 
 ## Headless MCP Server & CLI Entry Points
 
-When the `rostooling-mcp` Model Context Protocol server (`rostooling-languages` binary
-`rostooling-mcp`, `--jar <path>` or `ROSMODEL_JAR` / `ROSMODEL_JAVA` / `ROSMODEL_CATALOGUE_DIR`)
-is connected, agents can validate models against the real Xtext Language Server and run ROS 2 code
-generation directly without opening VS Code:
+The `rostooling-mcp` Model Context Protocol server (`rostooling-languages` binary `rostooling-mcp`,
+`--jar <path>` or `ROSMODEL_JAR` / `ROSMODEL_JAVA` / `ROSMODEL_CATALOGUE_DIR`) runs the RosTooling
+Java/Xtext server headlessly — no VS Code needed:
 
+- **Semantic `.rossystem` editing** — `ros_add_node`, `ros_connect_interfaces`,
+  `ros_set_parameter`, `ros_add_process`, `ros_remove_element`, `export_system_diagram` (see
+  *Building a `.rossystem` with the semantic MCP tools*).
 - **`validate_ros_model`** — validates syntax, cross-file `type:` / `from:` references, arrow
-  targets, and Xtext validator constraints on `.ros`, `.ros2`, or `.rossystem` files (use alongside
-  fast static `rosmodel-lint`).
+  targets, and Xtext validator constraints on `.ros`, `.ros2`, or `.rossystem` files.
 - **`generate_ros2_wrappers`** — generates C++ (`cpp`), Python (`python`), or Hybrid (`both`) ROS 2
   node wrappers, runners, `CMakeLists.txt`, and starter domain logic templates from a `.ros2` model
   into `src-gen/`.
@@ -1035,9 +1020,8 @@ generation directly without opening VS Code:
 - **`build_ros2_package`** — builds generated packages in the target ROS 2 workspace via
   `colcon build`.
 
-Installing this repository with `pip install -e .` provides six CLI entry points on `PATH`:
-`rosmodel-lint`, `ros-plot`, `extract-ros2-interfaces`, `extract-rossystem`, `ros-studio`, and
-`coresense-studio`.
+Installing this repository with `pip install -e .` puts the extractors (`extract-ros2-interfaces`,
+`extract-rossystem`) and the viewers (`ros-plot`, `ros-studio`, `coresense-studio`) on `PATH`.
 
 Full detail on demand: `references/ros2-syntax.md`, `references/rossystem-syntax.md`,
 `references/worked-examples.md`.
