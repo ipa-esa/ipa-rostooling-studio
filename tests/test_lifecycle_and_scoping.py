@@ -387,17 +387,44 @@ def test_phase1_plugins_and_slots_lint_and_plot(tmp_path):
     planner_server:
       node: planner_server
       parameters:
+        leaf_libraries:
+          type: Array [ String ]
         planner_plugin:
           type: String
       pluginslots:
         global_planner:
           base: "nav2_core::GlobalPlanner"
           parameter: planner_plugin
+        leaves:
+          base: "custom_core::LeafBase"
+          parameter: leaf_libraries
+          format: library
 """)
     h_linter = rosmodel_lint.Linter(str(host_ros2))
     h_linter.run()
     h_errors = [f for f in h_linter.findings if f.severity == rosmodel_lint.ERROR]
     assert not h_errors, f"Host pluginslot model had lint errors: {h_errors}"
+
+    bad_host = tmp_path / "bad_host.ros2"
+    bad_host.write_text("""bad_host:
+  artifacts:
+    host_server:
+      node: host_server
+      parameters:
+        leaf_libraries:
+          type: Array [ String ]
+      pluginslots:
+        leaves:
+          base: "custom_core::LeafBase"
+          parameter: leaf_libraries
+          format: bogus
+""")
+    b_linter = rosmodel_lint.Linter(str(bad_host))
+    b_linter.run()
+    b_errors = [f for f in b_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert any(f.rule == "RM038" and "format" in f.message for f in b_errors), (
+        f"Invalid pluginslot format must trigger RM038: {b_errors}"
+    )
 
     plug_ros2 = tmp_path / "planner_plugins.ros2"
     plug_ros2.write_text("""planner_plugins:

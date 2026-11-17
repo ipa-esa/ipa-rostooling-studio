@@ -666,6 +666,9 @@ ROS2_PLUGIN_BLOCKS = [
     "parameters",
 ]
 
+# Ros.xtext:178 PluginSlotValueFormat enum
+VALID_PLUGINSLOT_FORMATS = ("class", "library")
+
 # Ros2.xtext:69-74 LifecycleState enum
 LIFECYCLE_STATES = ("Unconfigured", "Inactive", "Active", "Finalized")
 
@@ -2397,10 +2400,17 @@ class Linter(object):
             return
         self.check_duplicate_keys(val, "pluginslot '%s'" % slot_key.value)
         for k, _ in mapping_items(val):
-            if is_scalar(k) and k.value not in ("base", "parameter", "default"):
+            if is_scalar(k) and k.value not in ("base", "parameter", "format", "default"):
                 self.error(node_line(k), "RM036",
                            "Unknown key '%s:' inside pluginslot '%s'." % (k.value, slot_key.value),
-                           "PluginSlot admits only: base, parameter, default.")
+                           "PluginSlot admits only: base, parameter, format, default.")
+        format_node = mapping_get(val, "format")
+        if format_node is not None:
+            fmt_val = format_node.value.strip() if is_scalar(format_node) else ""
+            if fmt_val not in VALID_PLUGINSLOT_FORMATS:
+                self.error(node_line(format_node), "RM038",
+                           "PluginSlot '%s' has invalid 'format: %s' (must be 'class' or 'library')." % (slot_key.value, fmt_val),
+                           "Ros.xtext:178 -- PluginSlotValueFormat is 'class' (default) or 'library'.")
         base_node = mapping_get(val, "base")
         base_val = base_node.value.strip() if is_scalar(base_node) else ""
         if not base_val or "::" not in base_val or base_val.startswith("::") or base_val.endswith("::"):

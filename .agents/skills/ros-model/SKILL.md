@@ -241,7 +241,9 @@ The `rostooling-mcp` server exposes coordinate-free, semantic editing tools for 
 
 | Tool | Does | Key arguments |
 |---|---|---|
-| `ros2_add_artifact` | adds an artifact/node contract; **creates the `.ros2` file if it does not exist** | `package_path`, `artifact_name`, optional `node_name`, `package_name`, `from_git_repo`, `lifecycle` |
+| `ros2_add_artifact` | adds an artifact/node contract; **creates the `.ros2` file if it does not exist** | `package_path`, `artifact_name`, optional `node_name`, `package_name`, `from_git_repo`, `lifecycle`, `is_library` |
+| `ros2_add_plugin` | adds a `pluginlib` or `external` plugin to an artifact | `package_path`, `artifact_name`, `plugin_name`, optional `implements`, `loader` (`pluginlib`/`external`) |
+| `ros2_add_plugin_slot` | declares a host node `pluginslots:` entry | `package_path`, `artifact`, `name`, `base`, `parameter`, optional `format` (`class`/`library`), `default_plugin` |
 | `ros2_add_interface` | adds a publisher, subscriber, service server/client, or action server/client to a node | `package_path`, `artifact`, `kind` (`pub`/`sub`/`ss`/`sc`/`as`/`ac`), `name`, `type`, optional `namespace`, `active_in`, `qos` |
 | `ros2_add_parameter` | adds a typed parameter declaration (with optional `default_value` / `value` / `namespace`) | `package_path`, `artifact`, `name`, `type` (`String`/`Integer`/`Double`/`Boolean`/`Base64`/`Array`), optional `default_value`, `value`, `namespace` |
 | `ros2_set_qos` | sets or clears QoS profile and policy fields on an existing interface | `package_path`, `artifact`, `interface_name`, optional QoS fields |
@@ -827,8 +829,8 @@ be the reader's only signal that nothing needed it.
 | Rule | Mandatory order |
 |---|---|
 | `AmentPackage` | `fromGitRepo:` → `artifacts:` → `dependencies:` |
-| `.ros2` artifact | `node:` (optional if `plugins:` is present) and/or `plugins:` |
-| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` blocks |
+| `.ros2` artifact | `node:` (optional if `plugins:` is present) and/or `plugins:` (`implements:` required for `pluginlib` or for any plugin attached to a `.rossystem` host slot) |
+| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` (`base:`, `parameter:`, optional `format: class \| library`, `default:`) blocks |
 | `.ros2` interface | `type:` → `ns:` → `active_in:` → `qos:` (`active_in:` only valid on lifecycle nodes) |
 | `.ros2` parameter | `type:` → **`default:`** → `ns:` → `value:` → `qos:` |
 | `.rossystem` node | `from:` → `namespace:` → `plugins:` → `interfaces:` → `parameters:` |
@@ -1049,7 +1051,7 @@ The `rostooling-mcp` Model Context Protocol server (`rostooling-languages` binar
 Java/Xtext server headlessly — no VS Code needed:
 
 - **Semantic `.ros` / `.ros2` / `.rossystem` authoring** — `ros_add_spec`, `ros2_add_artifact`,
-  `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`,
+  `ros2_add_plugin`, `ros2_add_plugin_slot`, `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`,
   `ros2_remove_element`, `ros_add_node`, `ros_add_subsystem`, `ros_set_system_property`,
   `ros_connect_interfaces`, `ros_set_parameter`, `ros_add_process`, `ros_remove_element`,
   `export_system_diagram` (see *Building `.ros`, `.ros2`, and `.rossystem` models with the semantic MCP tools*).
