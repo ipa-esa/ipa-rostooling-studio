@@ -249,6 +249,10 @@ The `rostooling-mcp` server exposes coordinate-free, semantic editing tools for 
 | `ros2_set_qos` | sets or clears QoS profile and policy fields on an existing interface | `package_path`, `artifact`, `interface_name`, optional QoS fields |
 | `ros2_set_property` | updates a property on `"root"`, `<artifact>`, `<artifact>.<interface>`, or `<artifact>.<param>` | `package_path`, `target`, `property` (`type`, `default`, `value`, `isLifecycle`, `fromGitRepo`, `namespace`, `activeStates`, `name`), `value` |
 | `ros2_remove_element` | removes an artifact, `<artifact>.<interface>`, `<artifact>.<param>`, spec, or spec field | `package_path`, `element` |
+| `ros_list_plugins` | lists active third-party `RosToolingPlugin` providers, `@<block>:` schemas, tools, and doc URIs | optional `workspace_dir` |
+| `ros_get_extension_block` | reads an `@<block>:` extension block from a `.ros2` or `.rossystem` target element (with optional `merged: true`) | `model_path`, `block_name`, optional `target_kind`, `target_name`, `merged` |
+| `ros_set_extension_block` | validates and sets, updates, or removes an `@<block>:` extension block on an `Extensible` element | `model_path`, `block_name`, `entries`, optional `target_kind`, `target_name`, `remove` |
+| `generate_plugin_outputs` | runs core + active plugin generators (`PackageBuild` + `GenerationContext`) respecting the Domain Logic Shield | `model_path`, optional `target_nodes`, `language`, `ros_distro`, `workspace_dir` |
 
 ### `.rossystem` composition tools
 
@@ -830,11 +834,14 @@ be the reader's only signal that nothing needed it.
 |---|---|
 | `AmentPackage` | `fromGitRepo:` → `artifacts:` → `dependencies:` |
 | `.ros2` artifact | `node:` (optional if `plugins:` is present) and/or `plugins:` (`implements:` required for `pluginlib` or for any plugin attached to a `.rossystem` host slot) |
-| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` (`base:`, `parameter:`, optional `format: class \| library`, `default:`) blocks |
+| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` (`base:`, `parameter:`, optional `format: class \| library`, `default:`) → trailing `@<extension>:` blocks |
+| `.ros2` plugin | `implements:` / `loader:` / interface & parameter blocks → trailing `@<extension>:` blocks |
 | `.ros2` interface | `type:` → `ns:` → `active_in:` → `qos:` (`active_in:` only valid on lifecycle nodes) |
 | `.ros2` parameter | `type:` → **`default:`** → `ns:` → `value:` → `qos:` |
-| `.rossystem` node | `from:` → `namespace:` → `plugins:` → `interfaces:` → `parameters:` |
+| `.rossystem` node | `from:` → `namespace:` → `plugins:` → `interfaces:` → `parameters:` → trailing `@<extension>:` blocks (also permitted on `System` and indented under `- <iface>: ...` `RosInterface` entries) |
 | `.rossystem` **system-level** parameter | `ns:` → `type:` → `default:` → `value:` (no `qos:`) |
+
+Inside `@<extension>:` blocks, cross-references to declared interfaces or parameters use `pub->`, `sub->`, `ss->`, `sc->`, `as->`, `ac->`, or `param->`.
 
 `default:` belongs to `ParameterType`, not to `Parameter`, and is legal on **every** scalar type —
 not only on `Array[T]`. It has no `BEGIN`/`END` of its own, so it sits as a sibling of `type:`

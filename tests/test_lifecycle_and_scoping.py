@@ -462,3 +462,90 @@ def test_phase1_plugins_and_slots_lint_and_plot(tmp_path):
     assert model["nodes"][0]["plugins"] == ["planner_plugins.StraightLine"]
     html = ros_plot.render_html([model])
     assert "planner_plugins.StraightLine" in html
+
+
+def test_phase2_extension_blocks_lint_and_plot(tmp_path):
+    import ros_plot
+
+    ext_ros2 = tmp_path / "ext_node.ros2"
+    ext_ros2.write_text("""ext_node:
+  artifacts:
+    app_bin:
+      node: app_node
+      publishers:
+        heartbeat:
+          type: "std_msgs/msg/String"
+      parameters:
+        rate_hz:
+          type: Integer
+          default: 10
+      @audit:
+        channel: "main"
+        out_port: pub->heartbeat
+        rate_param: param->rate_hz
+      plugins:
+        CustomExt:
+          loader: external
+          @audit:
+            channel: "plugin"
+""")
+    r2_linter = rosmodel_lint.Linter(str(ext_ros2))
+    r2_linter.run()
+    r2_errors = [f for f in r2_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not r2_errors, f"Valid .ros2 with @ blocks had lint errors: {r2_errors}"
+
+    # Invalid: @ block on node-less Artifact and invalid ref prefix foo->
+    bad_ext_ros2 = tmp_path / "bad_ext.ros2"
+    bad_ext_ros2.write_text("""bad_ext:
+  artifacts:
+    lib_only:
+      @audit:
+        channel: "bad"
+        broken: foo->bar
+""")
+    bad_r2 = rosmodel_lint.Linter(str(bad_ext_ros2))
+    bad_r2.run()
+    bad_r2_errors = [f for f in bad_r2.findings if f.severity == rosmodel_lint.ERROR]
+    assert any(f.rule == "RM036" for f in bad_r2_errors), bad_r2_errors
+
+    ext_sys = tmp_path / "ext_sys.rossystem"
+    ext_sys.write_text("""ext_sys:
+  fromFile: "ext_bringup/launch/app.launch.py"  # caller-supplied
+  nodes:
+    "app":
+      from: "ext_node.app_node"  # project-local
+      interfaces:
+        - "heartbeat": pub-> "app_bin::heartbeat"
+          @iface_ext:
+            qos_tag: "fast"
+      @audit:
+        channel: "sys_override"
+        out_port: pub->heartbeat
+  @sys_meta:
+    revision: 2
+""")
+    s_linter = rosmodel_lint.Linter(str(ext_sys))
+    s_linter.run()
+    s_errors = [f for f in s_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not s_errors, f"Valid .rossystem with @ blocks had lint errors: {s_errors}"
+
+    # Invalid: RosNode standard key after @ block must raise RM039
+    bad_order_sys = tmp_path / "bad_order.rossystem"
+    bad_order_sys.write_text("""bad_order:
+  fromFile: "ext_bringup/launch/app.launch.py"  # caller-supplied
+  nodes:
+    "app":
+      @audit:
+        channel: "early"
+      from: "ext_node.app_node"  # project-local
+""")
+    bo_linter = rosmodel_lint.Linter(str(bad_order_sys))
+    bo_linter.run()
+    bo_errors = [f for f in bo_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert any(f.rule == "RM039" for f in bo_errors), bo_errors
+
+    model = ros_plot.extract_model(str(ext_sys))
+    assert any(e["name"] == "@sys_meta" for e in model["extensions"]), model["extensions"]
+    assert any(e["name"] == "@audit" for e in model["nodes"][0]["extensions"]), model["nodes"][0]["extensions"]
+    html = ros_plot.render_html([model])
+    assert "@audit" in html

@@ -1084,6 +1084,43 @@ def normalise_bare_subsystems(text):
     return "".join(out), synth
 
 
+RE_EXTENSION_BLOCK_KEY = re.compile(
+    r"^@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$"
+)
+RE_EXTENSION_LINE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<at>@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*):(?P<rest>.*)$"
+)
+EXTENSION_REF_PREFIXES = ("pub", "sub", "ss", "sc", "as", "ac", "param")
+
+
+def is_extension_block_key(name):
+    return bool(isinstance(name, str) and RE_EXTENSION_BLOCK_KEY.match(name))
+
+
+def normalise_extension_blocks(text):
+    """Quote leading `@block:` keys line-for-line before YAML composition.
+
+    In YAML 1.1/1.2 `@` is reserved and cannot start a plain scalar key, whereas
+    RosTooling's Basics.xtext allows `@<ExtensionBlockName>:` at Extensible
+    hook locations (System, RosNode, RosInterface, Node, Plugin).
+    """
+    lines = text.splitlines(True)
+    out = []
+    for raw in lines:
+        eol = ""
+        body = raw
+        if body.endswith("\r\n"):
+            eol, body = "\r\n", body[:-2]
+        elif body.endswith("\n"):
+            eol, body = "\n", body[:-1]
+        m = RE_EXTENSION_LINE.match(body)
+        if m:
+            out.append('%s"%s":%s%s' % (m.group("indent"), m.group("at"), m.group("rest"), eol))
+        else:
+            out.append(raw)
+    return "".join(out)
+
+
 def normalise_connections(text):
     """Normalize connection entries in a `connections:` block in memory.
 
@@ -1552,6 +1589,7 @@ class Linter(object):
         # see normalise_bare_subsystems. Line-for-line, so the marks below stay the author's.
         source, self.synth_subsystem_lines = normalise_bare_subsystems(source)
         source = normalise_connections(source)
+        source = normalise_extension_blocks(source)
 
         try:
             self.root = yaml.compose(io.StringIO(source))
@@ -2306,6 +2344,16 @@ class Linter(object):
                            "See grammar-subset.md sec 5.2. Message specs belong in a .ros file.")
                 continue
 
+            if is_extension_block_key(name):
+                if "node" not in mapping_keys(node):
+                    self.error(line, "RM036",
+                               "Extension block '%s:' inside artifact '%s' requires a 'node:' declaration."
+                               % (name, art_key.value),
+                               "Extension blocks in .ros2 attach to Node or Plugin, not node-less Artifacts.")
+                else:
+                    self.check_extension_block(key, val)
+                continue
+
             if name not in ROS2_NODE_BLOCKS:
                 self.error(line, "RM036",
                            "Unknown block '%s:' inside artifact '%s'." % (name, art_key.value),
@@ -2376,6 +2424,9 @@ class Linter(object):
                 continue
             kname, kline = k.value, node_line(k)
             if kname in ("implements", "loader"):
+                continue
+            if is_extension_block_key(kname):
+                self.check_extension_block(k, v)
                 continue
             if kname not in ROS2_PLUGIN_BLOCKS:
                 self.error(kline, "RM036",
@@ -2839,6 +2890,9 @@ class Linter(object):
                           "(emission-profile sec 3). Avoid.")
             elif name == "connections":
                 pass  # handled after nodes, below
+            elif is_extension_block_key(name):
+                self.check_extension_block(key, val)
+                present.pop()  # System extension blocks sit outside ROSSYSTEM_TOP_KEYS ordering
             elif name != "parameters":
                 self.error(line, "RM037",
                            "Unknown key '%s:' at system level." % name,
@@ -3177,12 +3231,24 @@ class Linter(object):
         self.check_duplicate_keys(node, "node '%s'" % node_key.value)
         keys = mapping_keys(node)
 
+        saw_extension = False
         for extra in keys:
-            if extra not in ROSSYSTEM_NODE_KEYS:
+            if is_extension_block_key(extra):
+                saw_extension = True
+                self.check_extension_block(
+                    mapping_get_pair(node, extra)[0],
+                    mapping_get(node, extra),
+                )
+            elif extra not in ROSSYSTEM_NODE_KEYS:
                 self.error(node_line(mapping_get_pair(node, extra)[0]), "RM036",
                            "Unknown key '%s:' in node '%s'." % (extra, node_key.value),
-                           "A RosNode admits only: %s (RosSystem.xtext:60-75)."
+                           "A RosNode admits only: %s and trailing @<ext>: blocks (RosSystem.xtext:61-78)."
                            % ", ".join(ROSSYSTEM_NODE_KEYS))
+            elif saw_extension:
+                self.error(node_line(mapping_get_pair(node, extra)[0]), "RM039",
+                           "Standard RosNode key '%s:' appears after an @<extension>: block in node '%s'."
+                           % (extra, node_key.value),
+                           "RosSystem.xtext:61-78 requires @<extension>: blocks at the end of a RosNode.")
 
         resolved = None
         if "from" not in keys:
@@ -3307,6 +3373,9 @@ class Linter(object):
             if not is_mapping(item):
                 continue
             for key, val in mapping_items(item):
+                if is_scalar(key) and is_extension_block_key(key.value):
+                    self.check_extension_block(key, val)
+                    continue
                 if not is_scalar(key) or not is_scalar(val):
                     continue
                 name, line = key.value, node_line(key)
@@ -3344,6 +3413,42 @@ class Linter(object):
                       % node_key.value,
                       "Group by kind %s, alphabetical within each kind "
                       "(emission-profile rule 27)." % " -> ".join(ARROW_KIND_ORDER))
+
+    def check_extension_block(self, key_node, val_node):
+        """Validate generic syntax of an `@<name>:` ExtensionBlock (Basics.xtext:407-459)."""
+        name = getattr(key_node, "value", str(key_node))
+        line = node_line(key_node)
+        if is_scalar(val_node):
+            if str(val_node.value or "").strip():
+                self.error(line, "RM036",
+                           "Extension block '%s:' must have an indented key/value mapping body." % name,
+                           "Basics.xtext:407 -- @<name>: followed by indented entries or { ... }.")
+            return
+        if not is_mapping(val_node):
+            self.error(line, "RM036",
+                       "Extension block '%s:' body must be a key/value mapping." % name,
+                       "Basics.xtext:407 -- @<name>: entries must be key: value pairs.")
+            return
+        self.check_duplicate_keys(val_node, "extension block '%s'" % name)
+        self._check_extension_value_refs(val_node, name)
+
+    def _check_extension_value_refs(self, node, block_name):
+        if is_mapping(node):
+            for k, v in mapping_items(node):
+                if v is not None:
+                    self._check_extension_value_refs(v, block_name)
+        elif is_sequence(node):
+            for item in node.value:
+                self._check_extension_value_refs(item, block_name)
+        elif is_scalar(node) and not is_quoted(node):
+            raw = str(node.value or "").strip()
+            if "->" in raw:
+                prefix = raw.split("->", 1)[0].strip()
+                if prefix not in EXTENSION_REF_PREFIXES:
+                    self.error(node_line(node), "RM033",
+                               "Invalid extension reference prefix '%s->' in '%s:'." % (prefix, block_name),
+                               "Basics.xtext:451 admits only: %s."
+                               % ", ".join(p + "->" for p in EXTENSION_REF_PREFIXES))
 
     def parse_arrow(self, val, name, line, resolved=None):
         raw = val.value.strip()

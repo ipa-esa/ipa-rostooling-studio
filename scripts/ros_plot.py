@@ -119,6 +119,26 @@ def _linter_node_key_count(root):
     return len([k for k, _ in L.mapping_items(nodes_node) if L.is_scalar(k)])
 
 
+def _extract_extension_blocks(mapping_node):
+    """Extract `@<name>:` ExtensionBlocks on a mapping AST node for visualization."""
+    if not L.is_mapping(mapping_node):
+        return []
+    out = []
+    for k, v in L.mapping_items(mapping_node):
+        if L.is_scalar(k) and L.is_extension_block_key(k.value):
+            keys = []
+            if L.is_mapping(v):
+                for ek, _ in L.mapping_items(v):
+                    if L.is_scalar(ek):
+                        keys.append(ek.value)
+            out.append({
+                "name": k.value,
+                "keys": keys,
+                "summary": _node_repr(v) or "",
+            })
+    return out
+
+
 def extract_model(path, use_catalogue=True):
     """Build the plain-dict model a browser tab consumes. Never raises on a malformed file --
     it degrades to a header + banner with 0 nodes and a diagnostic."""
@@ -134,6 +154,7 @@ def extract_model(path, use_catalogue=True):
         "processes": [],
         "subSystems": [],
         "systemParams": [],
+        "extensions": [],
         "diagnostics": [],
         "catalogueAvailable": (use_catalogue and L.load_node_index() is not None),
         "nodeCount": 0,
@@ -165,6 +186,7 @@ def extract_model(path, use_catalogue=True):
     from_file_node = L.mapping_get(sys_val, "fromFile")
     if L.is_scalar(from_file_node):
         model["fromFile"] = _strip_quotes(from_file_node.value)
+    model["extensions"] = _extract_extension_blocks(sys_val)
 
     # ---- nodes + interface/parameter walk ---------------------------------------------
     interface_table = {}   # label -> [ {nodeId, kind, target} ]
@@ -190,6 +212,7 @@ def extract_model(path, use_catalogue=True):
                 "nodeName": None,
                 "namespace": None,
                 "plugins": [],
+                "extensions": [],
                 "interfaces": [],
                 "params": [],
                 "resolved": False,
@@ -220,6 +243,8 @@ def extract_model(path, use_catalogue=True):
                     for pe in plugins_node.value:
                         if L.is_scalar(pe) and _strip_quotes(pe.value).strip():
                             nrec["plugins"].append(_strip_quotes(pe.value).strip())
+
+                nrec["extensions"] = _extract_extension_blocks(val)
 
                 iface_node = L.mapping_get(val, "interfaces")
                 if L.is_sequence(iface_node):
@@ -931,6 +956,7 @@ var DATA = /*__DATA__*/null;
       if(m.from){ var s=el("div","ns"); s.textContent=m.from; head.appendChild(s); }
       if(m.isDup){ var bd=el("span","badge"); bd.textContent="#"+m.dupIndex; box.appendChild(bd); }
       if(m.plugins && m.plugins.length){ var pbd=el("span","badge"); pbd.textContent="+"+m.plugins.length+" plugin"+(m.plugins.length>1?"s":""); head.appendChild(pbd); }
+      if(m.extensions && m.extensions.length){ var ebd=el("span","badge"); ebd.textContent=m.extensions.map(function(x){return x.name;}).join(" "); head.appendChild(ebd); }
       if(!m.resolved && m.from) box.classList.add("unresolved");
       box.appendChild(head);
       box.style.width=NW+"px";
@@ -955,6 +981,7 @@ var DATA = /*__DATA__*/null;
       // level 3: full detail bands
       if(m.namespace){ var nsr=el("div","nsrow"); nsr.textContent="namespace: "+m.namespace; box.appendChild(nsr); }
       if(m.plugins && m.plugins.length){ var plr=el("div","nsrow"); plr.textContent="plugins: "+m.plugins.join(", "); box.appendChild(plr); }
+      if(m.extensions && m.extensions.length){ var exr=el("div","nsrow"); exr.textContent="extensions: "+m.extensions.map(function(x){return x.name+(x.keys&&x.keys.length?"("+x.keys.join(", ")+")":"");}).join(", "); box.appendChild(exr); }
       KIND_ORDER.forEach(function(k){
         if(k==="param") return;
         var list=m.interfaces.filter(function(i){return i.kind===k;});
