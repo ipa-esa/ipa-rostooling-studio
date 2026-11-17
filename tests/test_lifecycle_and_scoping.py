@@ -376,3 +376,62 @@ def test_linter_subsystem_connection_and_rm053_silencing(tmp_path):
     linter_plain.run()
     plain_rm053 = [f for f in linter_plain.findings if f.rule == "RM053"]
     assert len(plain_rm053) == 1, "RM053 must fire when fromFile is absent and not a generator"
+
+
+def test_phase1_plugins_and_slots_lint_and_plot(tmp_path):
+    import ros_plot
+
+    host_ros2 = tmp_path / "planner_host.ros2"
+    host_ros2.write_text("""planner_host:
+  artifacts:
+    planner_server:
+      node: planner_server
+      parameters:
+        planner_plugin:
+          type: String
+      pluginslots:
+        global_planner:
+          base: "nav2_core::GlobalPlanner"
+          parameter: planner_plugin
+""")
+    h_linter = rosmodel_lint.Linter(str(host_ros2))
+    h_linter.run()
+    h_errors = [f for f in h_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not h_errors, f"Host pluginslot model had lint errors: {h_errors}"
+
+    plug_ros2 = tmp_path / "planner_plugins.ros2"
+    plug_ros2.write_text("""planner_plugins:
+  artifacts:
+    straight_line_lib:
+      plugins:
+        StraightLine:
+          implements: "nav2_core::GlobalPlanner"
+          loader: pluginlib
+          publishers:
+            debug_plan:
+              type: "std_msgs/msg/String"
+        ExtHelper:
+          loader: external
+""")
+    p_linter = rosmodel_lint.Linter(str(plug_ros2))
+    p_linter.run()
+    p_errors = [f for f in p_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not p_errors, f"Node-less plugin library had lint errors: {p_errors}"
+
+    sys_file = tmp_path / "plug_app.rossystem"
+    sys_file.write_text("""plug_app:
+  fromFile: "plug_bringup/launch/app.launch.py"  # caller-supplied
+  nodes:
+    "host":
+      from: "planner_host.planner_server"  # project-local
+      plugins: ["planner_plugins.StraightLine"]
+""")
+    s_linter = rosmodel_lint.Linter(str(sys_file))
+    s_linter.run()
+    s_errors = [f for f in s_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not s_errors, f"System with plugins had lint errors: {s_errors}"
+
+    model = ros_plot.extract_model(str(sys_file))
+    assert model["nodes"][0]["plugins"] == ["planner_plugins.StraightLine"]
+    html = ros_plot.render_html([model])
+    assert "planner_plugins.StraightLine" in html

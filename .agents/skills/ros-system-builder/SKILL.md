@@ -59,7 +59,7 @@ flowchart TD
 
 ### Stage 2: Parallel Subagent Delegation
 
-For every custom node that needs implementation, launch an autonomous subagent using `invoke_subagent`.
+For every custom node or custom `pluginlib` plugin that needs implementation, launch an autonomous subagent using `invoke_subagent`. (Off-the-shelf `loader: external` plugins generate no C++ skeleton and are already satisfied at runtime.)
 
 > [!IMPORTANT]
 > Do NOT implement the nodes yourself in the main thread. Delegate each custom node to a dedicated subagent so compiler outputs and intermediate iterations stay in isolated contexts.

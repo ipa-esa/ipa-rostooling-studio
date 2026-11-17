@@ -653,6 +653,17 @@ ROS2_NODE_BLOCKS = [
     "actionservers",
     "actionclients",
     "parameters",
+    "pluginslots",
+]
+
+ROS2_PLUGIN_BLOCKS = [
+    "publishers",
+    "subscribers",
+    "serviceservers",
+    "serviceclients",
+    "actionservers",
+    "actionclients",
+    "parameters",
 ]
 
 # Ros2.xtext:69-74 LifecycleState enum
@@ -715,7 +726,7 @@ KNOWN_LAUNCH_SUBSTITUTIONS = {
 }
 
 # RosSystem.xtext:60-75 -- fixed member order for a RosNode (rule 22).
-ROSSYSTEM_NODE_KEYS = ["from", "namespace", "interfaces", "parameters"]
+ROSSYSTEM_NODE_KEYS = ["from", "namespace", "plugins", "interfaces", "parameters"]
 
 # checkPortPatterns (S4): the only three legal from->to pairings.
 ARROW_FROM_TO = {"pub": "sub", "ss": "sc", "as": "ac"}
@@ -2256,6 +2267,13 @@ class Linter(object):
                 is_lifecycle = True
 
         blocks_present = []
+        declared_param_names = set()
+        params_node = mapping_get(node, "parameters")
+        if is_mapping(params_node):
+            for pk, _ in mapping_items(params_node):
+                if is_scalar(pk):
+                    declared_param_names.add(pk.value)
+
         for key, val in mapping_items(node):
             if not is_scalar(key):
                 continue
@@ -2267,6 +2285,18 @@ class Linter(object):
                     self.check_name_conventions(val, "Node name", "RM012", WARNING)
                 continue
 
+            if name == "plugins":
+                if is_mapping(val):
+                    self.check_duplicate_keys(val, "'plugins:' block")
+                    for pkey, pval in mapping_items(val):
+                        if is_scalar(pkey):
+                            self.check_ros2_plugin(pkey, pval)
+                else:
+                    self.error(line, "RM036",
+                               "Block 'plugins:' inside artifact '%s' must be a mapping." % art_key.value,
+                               "Each plugin entry maps <PluginName>: { implements: ..., loader: ... }.")
+                continue
+
             if name in ROS2_FORBIDDEN_SPEC_BLOCKS:
                 self.error(line, "RM030",
                            "'%s:' block is not reachable in a .ros2 file." % name,
@@ -2276,32 +2306,117 @@ class Linter(object):
             if name not in ROS2_NODE_BLOCKS:
                 self.error(line, "RM036",
                            "Unknown block '%s:' inside artifact '%s'." % (name, art_key.value),
-                           "A Node admits only: %s (Ros.xtext:121-159)."
+                           "A Node admits only: %s (and artifact allows 'plugins') (Ros.xtext:114-171)."
                            % ", ".join(ROS2_NODE_BLOCKS))
                 continue
 
             blocks_present.append(name)
             if is_mapping(val):
                 self.check_duplicate_keys(val, "'%s:' block" % name)
-                self.check_alphabetical(val, line, "'%s:'" % name)
+                if name != "pluginslots":
+                    self.check_alphabetical(val, line, "'%s:'" % name)
                 for entry_key, entry_val in mapping_items(val):
                     if not is_scalar(entry_key):
                         continue
                     if name == "parameters":
                         self.check_ros2_parameter(entry_key, entry_val)
+                    elif name == "pluginslots":
+                        self.check_ros2_pluginslot(entry_key, entry_val, declared_param_names)
                     else:
                         self.check_ros2_interface(name, entry_key, entry_val, is_lifecycle=is_lifecycle)
 
-        if "node" not in mapping_keys(node):
+        if "node" not in mapping_keys(node) and "plugins" not in mapping_keys(node):
             self.error(node_line(art_key), "RM038",
-                       "Artifact '%s' has no 'node:' declaration." % art_key.value,
-                       "Ros.xtext:122 -- a Node begins with 'node:' <RosNames>.")
+                       "Artifact '%s' has neither 'node:' nor 'plugins:' declaration." % art_key.value,
+                       "Ros.xtext:114-124 -- an Artifact declares a 'node:', 'plugins:', or both.")
 
-        self.check_ordering(blocks_present, ROS2_NODE_BLOCKS, node_line(art_key), "RM039",
-                            "Node block",
-                            "The grammar permits any order, so convention decides. Canonical "
-                            "order is the grammar's declaration order (emission-profile rule 24): "
-                            "%s." % " -> ".join(ROS2_NODE_BLOCKS))
+        if blocks_present:
+            self.check_ordering(blocks_present, ROS2_NODE_BLOCKS, node_line(art_key), "RM039",
+                                "Node block",
+                                "The grammar permits any order, so convention decides. Canonical "
+                                "order is the grammar's declaration order (emission-profile rule 24): "
+                                "%s." % " -> ".join(ROS2_NODE_BLOCKS))
+
+    def check_ros2_plugin(self, plugin_key, val):
+        if not is_mapping(val):
+            self.error(node_line(plugin_key), "RM036",
+                       "Plugin '%s' body must be a mapping." % plugin_key.value,
+                       "Ros.xtext:178 -- declare 'implements:' / 'loader:' and interface blocks.")
+            return
+        self.check_duplicate_keys(val, "plugin '%s'" % plugin_key.value)
+        loader_node = mapping_get(val, "loader")
+        loader_val = "pluginlib"
+        if loader_node is not None:
+            if not is_scalar(loader_node) or loader_node.value not in ("pluginlib", "external"):
+                self.error(node_line(loader_node), "RM033",
+                           "Plugin '%s' has invalid loader '%s'."
+                           % (plugin_key.value, getattr(loader_node, "value", loader_node)),
+                           "Ros.xtext:173 -- loader must be 'pluginlib' or 'external'.")
+            else:
+                loader_val = loader_node.value
+
+        impl_node = mapping_get(val, "implements")
+        impl_val = impl_node.value.strip() if is_scalar(impl_node) else ""
+        if loader_val == "pluginlib" and not impl_val:
+            self.error(node_line(plugin_key), "RM038",
+                       "Plugin '%s' with loader 'pluginlib' must specify 'implements: \"pkg::BaseClass\"'."
+                       % plugin_key.value,
+                       "RosValidator.checkPluginDefinition requires 'implements' with '::' for pluginlib.")
+        elif impl_val and ("::" not in impl_val or impl_val.startswith("::") or impl_val.endswith("::")):
+            self.error(node_line(impl_node), "RM033",
+                       "Plugin '%s' field 'implements' ('%s') must be a C++ namespace-qualified class."
+                       % (plugin_key.value, impl_val),
+                       "Use 'pkg::BaseClass' format.")
+
+        for k, v in mapping_items(val):
+            if not is_scalar(k):
+                continue
+            kname, kline = k.value, node_line(k)
+            if kname in ("implements", "loader"):
+                continue
+            if kname not in ROS2_PLUGIN_BLOCKS:
+                self.error(kline, "RM036",
+                           "Unknown block '%s:' inside plugin '%s'." % (kname, plugin_key.value),
+                           "A Plugin admits only: implements, loader, %s." % ", ".join(ROS2_PLUGIN_BLOCKS))
+                continue
+            if is_mapping(v):
+                self.check_duplicate_keys(v, "'%s:' block" % kname)
+                for entry_key, entry_val in mapping_items(v):
+                    if not is_scalar(entry_key):
+                        continue
+                    if kname == "parameters":
+                        self.check_ros2_parameter(entry_key, entry_val)
+                    else:
+                        self.check_ros2_interface(kname, entry_key, entry_val, is_lifecycle=False)
+
+    def check_ros2_pluginslot(self, slot_key, val, declared_param_names):
+        if not is_mapping(val):
+            self.error(node_line(slot_key), "RM036",
+                       "PluginSlot '%s' body must be a mapping." % slot_key.value,
+                       "Ros.xtext:224 -- declare 'base:' and 'parameter:'.")
+            return
+        self.check_duplicate_keys(val, "pluginslot '%s'" % slot_key.value)
+        for k, _ in mapping_items(val):
+            if is_scalar(k) and k.value not in ("base", "parameter", "default"):
+                self.error(node_line(k), "RM036",
+                           "Unknown key '%s:' inside pluginslot '%s'." % (k.value, slot_key.value),
+                           "PluginSlot admits only: base, parameter, default.")
+        base_node = mapping_get(val, "base")
+        base_val = base_node.value.strip() if is_scalar(base_node) else ""
+        if not base_val or "::" not in base_val or base_val.startswith("::") or base_val.endswith("::"):
+            self.error(node_line(base_node or slot_key), "RM038",
+                       "PluginSlot '%s' must declare a C++ qualified 'base:' class ('pkg::Base')." % slot_key.value,
+                       "Ros.xtext:229 -- 'base:' is required and must contain '::'.")
+        param_node = mapping_get(val, "parameter")
+        param_val = param_node.value.strip() if is_scalar(param_node) else ""
+        if not param_val:
+            self.error(node_line(param_node or slot_key), "RM038",
+                       "PluginSlot '%s' is missing 'parameter:'." % slot_key.value,
+                       "Ros.xtext:230 -- 'parameter:' links the slot to a String / Array[String] node parameter.")
+        elif param_val not in declared_param_names:
+            self.error(node_line(param_node), "RM038",
+                       "PluginSlot '%s' references undeclared node parameter '%s'." % (slot_key.value, param_val),
+                       "Declare parameter '%s' in this node's 'parameters:' block." % param_val)
 
     def check_placeholder_name(self, name, line):
         """An interface name still holding the extractor's {...} placeholders (a name built at
@@ -3082,6 +3197,12 @@ class Linter(object):
         iface_node = mapping_get(node, "interfaces")
         if iface_node is not None:
             self.check_interfaces(iface_node, node_key, interfaces, resolved)
+
+        plugins_node = mapping_get(node, "plugins")
+        if plugins_node is not None and not is_sequence(plugins_node):
+            self.error(node_line(plugins_node), "RM036",
+                       "Node '%s' field 'plugins:' must be a list of '<pkg>.<Plugin>' strings." % node_key.value,
+                       "RosSystem.xtext -- e.g. plugins: [\"my_plugins.StraightLine\"].")
 
         param_node = mapping_get(node, "parameters")
         if param_node is not None:

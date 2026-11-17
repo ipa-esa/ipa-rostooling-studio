@@ -189,6 +189,7 @@ def extract_model(path, use_catalogue=True):
                 "package": None,
                 "nodeName": None,
                 "namespace": None,
+                "plugins": [],
                 "interfaces": [],
                 "params": [],
                 "resolved": False,
@@ -213,6 +214,12 @@ def extract_model(path, use_catalogue=True):
                 ns_node = L.mapping_get(val, "namespace")
                 if L.is_scalar(ns_node):
                     nrec["namespace"] = _strip_quotes(ns_node.value)
+
+                plugins_node = L.mapping_get(val, "plugins")
+                if L.is_sequence(plugins_node):
+                    for pe in plugins_node.value:
+                        if L.is_scalar(pe) and _strip_quotes(pe.value).strip():
+                            nrec["plugins"].append(_strip_quotes(pe.value).strip())
 
                 iface_node = L.mapping_get(val, "interfaces")
                 if L.is_sequence(iface_node):
@@ -923,6 +930,7 @@ var DATA = /*__DATA__*/null;
       if(nd.ghost){ var g=el("div","ns"); g.textContent="(dangling endpoint)"; head.appendChild(g); box.appendChild(head); box.style.width=NW+"px"; return; }
       if(m.from){ var s=el("div","ns"); s.textContent=m.from; head.appendChild(s); }
       if(m.isDup){ var bd=el("span","badge"); bd.textContent="#"+m.dupIndex; box.appendChild(bd); }
+      if(m.plugins && m.plugins.length){ var pbd=el("span","badge"); pbd.textContent="+"+m.plugins.length+" plugin"+(m.plugins.length>1?"s":""); head.appendChild(pbd); }
       if(!m.resolved && m.from) box.classList.add("unresolved");
       box.appendChild(head);
       box.style.width=NW+"px";
@@ -946,6 +954,7 @@ var DATA = /*__DATA__*/null;
 
       // level 3: full detail bands
       if(m.namespace){ var nsr=el("div","nsrow"); nsr.textContent="namespace: "+m.namespace; box.appendChild(nsr); }
+      if(m.plugins && m.plugins.length){ var plr=el("div","nsrow"); plr.textContent="plugins: "+m.plugins.join(", "); box.appendChild(plr); }
       KIND_ORDER.forEach(function(k){
         if(k==="param") return;
         var list=m.interfaces.filter(function(i){return i.kind===k;});

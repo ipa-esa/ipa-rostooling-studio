@@ -16,9 +16,9 @@ silently corrupt a model, not a substitute for reading the specification.
 
 **Author and modify every model through the `rostooling-mcp` semantic tools whenever the MCP server is connected — NEVER synthesize `.ros`, `.ros2`, or `.rossystem` text with `Write`/`Edit` and run `validate_ros_model` afterwards as a substitute.**
 - For `.ros` message/service/action specs: use `ros_add_spec`.
-- For `.ros2` package models: use `ros2_add_artifact`, `ros2_add_interface`, `ros2_add_parameter`,
-  `ros2_set_qos`, `ros2_set_property`, and `ros2_remove_element`.
-- For `.rossystem` compositions: use `ros_add_node` (supports `from_file`), `ros_add_subsystem`,
+- For `.ros2` package models: use `ros2_add_artifact`, `ros2_add_plugin`, `ros2_add_plugin_slot`,
+  `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`, and `ros2_remove_element`.
+- For `.rossystem` compositions: use `ros_add_node` (supports `from_file` and `plugins`), `ros_add_subsystem`,
   `ros_set_system_property`, `ros_auto_connect`, `ros_connect_interfaces`, `ros_set_parameter`,
   `ros_add_process`, `ros_remove_element`, and `export_system_diagram`.
 - Wire connections with `ros_auto_connect`, never by matching names yourself: dry run, apply the
@@ -53,10 +53,11 @@ These cause hard errors or silent semantic corruption. Never violate them.
    rule there and admits only `fromGitRepo:` / `artifacts:` / `dependencies:`. Message specs
    live in `.ros` files.
 7. Grammar-fixed member order: `AmentPackage` is `fromGitRepo:` → `artifacts:` →
-   `dependencies:`; a `.rossystem` node is `from:` → `namespace:` → `interfaces:` →
+   `dependencies:`; a `.rossystem` node is `from:` → `namespace:` → `plugins:` → `interfaces:` →
    `parameters:`; an interface is `type:` → `ns:` → `active_in:` → `qos:` (`active_in:` is
    valid only when the node has `lifecycle: true`); a `.ros2` parameter is `type:` → `ns:` →
-   `value:` → `qos:`. Violating any of these is a parse error.
+   `value:` → `qos:`. An `Artifact` can hold `node:` (executable), `plugins:` (library/pluginlib/external),
+   or both; `pluginlib` plugins require a C++-qualified `implements: "pkg::BaseClass"`. Violating order is a parse error.
 8. Connections: `from` is always the server/publisher. Only `pub->`/`sub->`, `ss->`/`sc->`,
    `as->`/`ac->` pair legally, and both endpoints must carry byte-identical `type:` strings —
    the validator compares object identity, not type names. Endpoints may be short interface names

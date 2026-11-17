@@ -80,9 +80,9 @@ Call the RosTooling MCP tool `generate_ros2_wrappers` (or run via the CLI):
 ```
 
 This generates into `src-gen/<pkg>/`:
-* The communication wrapper
+* The communication wrapper (`*NodeWrapper.*` for nodes, or `*RosWrapper` in `<plugin>_plugin_wrapper.hpp` + `plugins.xml` + `PLUGINLIB_EXPORT_CLASS` for `pluginlib` plugins)
 * The build files (`CMakeLists.txt`, `package.xml`, `setup.py`)
-* The initial logic skeleton: `<pkg>/<node_name>_logic.py` (Python) or `include/<pkg>/<NodeName>Algorithm.hpp` (C++)
+* The initial logic skeleton: `<pkg>/<node_name>_logic.py` (Python), `include/<pkg>/<NodeName>Algorithm.hpp` (C++ nodes), or `include/<pkg>/<plugin_snake>_plugin.hpp` (`pluginlib` C++ plugins, Domain Logic Shield — inherits from the `implements` base class with a `ros_wrapper_` member)
 
 ### Step 3: Implement Pure Business Logic
 

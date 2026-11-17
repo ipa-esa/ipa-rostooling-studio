@@ -827,10 +827,11 @@ be the reader's only signal that nothing needed it.
 | Rule | Mandatory order |
 |---|---|
 | `AmentPackage` | `fromGitRepo:` → `artifacts:` → `dependencies:` |
-| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter blocks |
+| `.ros2` artifact | `node:` (optional if `plugins:` is present) and/or `plugins:` |
+| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` blocks |
 | `.ros2` interface | `type:` → `ns:` → `active_in:` → `qos:` (`active_in:` only valid on lifecycle nodes) |
 | `.ros2` parameter | `type:` → **`default:`** → `ns:` → `value:` → `qos:` |
-| `.rossystem` node | `from:` → `namespace:` → `interfaces:` → `parameters:` |
+| `.rossystem` node | `from:` → `namespace:` → `plugins:` → `interfaces:` → `parameters:` |
 | `.rossystem` **system-level** parameter | `ns:` → `type:` → `default:` → `value:` (no `qos:`) |
 
 `default:` belongs to `ParameterType`, not to `Parameter`, and is legal on **every** scalar type —
