@@ -19,8 +19,13 @@ silently corrupt a model, not a substitute for reading the specification.
 - For `.ros2` package models: use `ros2_add_artifact`, `ros2_add_interface`, `ros2_add_parameter`,
   `ros2_set_qos`, `ros2_set_property`, and `ros2_remove_element`.
 - For `.rossystem` compositions: use `ros_add_node` (supports `from_file`), `ros_add_subsystem`,
-  `ros_set_system_property`, `ros_connect_interfaces`, `ros_set_parameter`, `ros_add_process`,
-  `ros_remove_element`, and `export_system_diagram`.
+  `ros_set_system_property`, `ros_auto_connect`, `ros_connect_interfaces`, `ros_set_parameter`,
+  `ros_add_process`, `ros_remove_element`, and `export_system_diagram`.
+- Wire connections with `ros_auto_connect`, never by matching names yourself: dry run, apply the
+  preselected candidates, decide only the receivers left ambiguous (with a stated reason, or leave
+  them open), then apply in one call. `ros_connect_interfaces` only for a connection the dry run
+  does not propose. When transcribing an existing system, write only the connections the source
+  declares. Full procedure: *Wiring connections with `ros_auto_connect`* in `ros-model`.
 - Restrict manual text edits strictly to adding provenance / `# FLAG` comments (if required by the workflow) on top of MCP- or extractor-generated models, or offline fallback when no MCP server is connected. Treat rules 1–12 below as a guide for understanding and reviewing models — not permission to bypass MCP authoring.
 
 ## Non-negotiable rules

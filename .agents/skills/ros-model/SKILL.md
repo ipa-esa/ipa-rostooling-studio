@@ -255,7 +255,8 @@ The `rostooling-mcp` server exposes coordinate-free, semantic editing tools for 
 | `ros_add_node` | adds a node instance; **creates the `.rossystem` if it does not exist** | `system_path`, `node_name`, `from` = `"<package>.<node>"` (§4b), optional `namespace`, `system_name`, `from_file` |
 | `ros_add_subsystem` | adds a `subSystems:` entry referencing another `.rossystem` in the workspace | `system_path`, `subsystem_name`, optional `system_name`, `from_file` |
 | `ros_set_system_property` | sets a top-level system property (`name` or `fromFile`) | `system_path`, `property` (`name`/`fromFile`), `value` |
-| `ros_connect_interfaces` | connects two interfaces (pub/sub, service server/client, action server/client) | `from`, `to` as `"<node>.<interface>"` — order does not matter |
+| `ros_auto_connect` | **wires the system**: proposes every connection the server can verify (complementary kind, identical resolved type, also into subsystems), ranked per receiving port; dry run by default, then adds the chosen ones in one edit | `system_path`, optional `nodes` (focus), `apply`, `connections` (candidate ids) |
+| `ros_connect_interfaces` | connects two interfaces explicitly — only for a connection `ros_auto_connect` does not propose | `from`, `to` as `"<node>.<interface>"` — order does not matter |
 | `ros_set_parameter` | sets a parameter value on a node instance | `node`, `parameter` (must be declared by the node type), `value`, optional `type_hint` |
 | `ros_add_process` | groups nodes into a process (composable container) or extends one | `process_name`, `nodes`, optional `threads` |
 | `ros_remove_element` | removes a node (with its connections), process, subsystem or connection | `element`, or `from` + `to` |
@@ -267,10 +268,54 @@ The workflow, after the inventory of the previous section:
 2. Create or update any custom `.ros2` node models with `ros2_add_artifact` -> `ros2_add_interface` -> `ros2_add_parameter` -> `ros2_set_qos` / `ros2_set_property` (and keep extractor-generated `.ros2` output intact, editing via `ros2_*` rather than rewriting text).
 3. Make sure every `.ros2`/`.ros` the system references sits in the `.rossystem`'s workspace directory tree.
 4. `ros_add_node` once per node **in source order** (pass `system_name` and `from_file` on the first call, or use `ros_add_subsystem` for `subSystems:` entries). Each result lists the instance's interfaces as ready-to-use `"<node>.<interface>"` refs and its declared parameters — wire from those, never from memory. An unknown `from:` is refused.
-5. `ros_connect_interfaces` for every connection, `ros_set_parameter` for every parameter value, `ros_add_process` for every process.
+5. Wire with `ros_auto_connect` (see *Wiring connections with `ros_auto_connect`* below), then `ros_set_parameter` for every parameter value and `ros_add_process` for every process.
 6. Read every result. `"success": false` with an `"error"` field means **nothing was written** — fix the call. `"success": false` with a non-empty `"errors"` list means the edit was applied but the model now has Xtext validation errors — fix them before going on.
 7. Manual edits are strictly limited to inserting optional provenance / `# FLAG` comments (if needed after creation) — later MCP tool calls preserve them.
 8. `validate_ros_model` on every finished `.ros`, `.ros2`, and `.rossystem` file — the gate is `"isValid": true` with 0 errors — then `export_system_diagram` when a diagram is wanted.
+
+### Wiring connections with `ros_auto_connect`
+
+Connections are proposed and checked by the Java/Xtext server, not guessed. A candidate exists only
+when the kinds complement each other (publisher → subscriber, service server → client, action
+server → client) and both ends resolve to the identical message/service/action type — the check
+`MatchPortMsgs` needs, done on the resolved model. Your job is limited to the ambiguous cases.
+
+1. **Dry run.** Call `ros_auto_connect` with `system_path` only (add `nodes: [...]` to focus on
+   nodes you just added). Nothing is written. `receivers` lists every unconnected receiving port
+   (subscriber, service client, action client) with its candidate senders, best first. Each
+   candidate has an `id` (`"<sender ref>-><receiver ref>"`, refs written `node::iface` or
+   `subsystem::node::iface`), a `tier`, a `score`, an `evidence` sentence and `preselected`. The
+   result also returns `preselected` (all preselected ids), `alreadyConnected`, `emitterSummary`
+   (read-only fan-out per sender) and `skipped` (name matches that cannot be connected, with the
+   reason).
+2. **Take every preselected candidate.** A candidate is preselected only when it is the receiver's
+   unique `remap`, `directed-remap` or `contract` match. Accept it unless the two node instances sit
+   in different namespaces (see the namespace note below); then decide it like the rest.
+3. **Decide only the rest:** receivers with no preselection (`fuzzy`, `type-unique`,
+   `type-ambiguous`, or several equally strong matches). Choose a candidate only with a reason from
+   the task, the source or the node's documented role, and state that reason in your report.
+   Without one, leave the receiver unconnected and list it as an open decision. Never choose a
+   candidate just because it is ranked first.
+4. **Apply** with `apply: true` and `connections: [ids]`. Without `connections`, only the
+   preselected ids are applied. One call writes all of them as one undoable edit.
+5. **Read the result.** `applied` lists what was written; `rejected` lists ids the server refused
+   with its reason (a stale id; a second server for one service/action client, which takes exactly
+   one server; a subscriber may take several publishers). Re-run the dry run instead of retrying
+   blindly.
+6. `ros_connect_interfaces` stays for a connection the dry run does not propose, such as a
+   deliberate pairing of differently named topics. Justify each one in the report.
+
+Tiers, strongest first: `remap` (both ports remapped to the same name), `directed-remap` (one port
+remapped to the other's interface name), `contract` (same interface name, neither remapped),
+`fuzzy` (similar names after normalising case, namespace, separators and suffixes such as
+`_in`/`_out`/`_raw`), `type-unique` (names say nothing; the only compatible sender),
+`type-ambiguous`.
+
+- **Namespaces are not part of the match.** A `contract` match between node instances in different
+  namespaces may not connect at runtime: check the namespaces before accepting it.
+- **Subsystems:** interfaces a subsystem declares under `interfaces:` are candidates
+  (`subsystem::node::iface`). Interfaces its nodes only inherit are not, and appear in `skipped` as
+  "not exposed by subsystem X" (§8d).
 
 What the server writes, so the self-check does not trip over it: interfaces are listed explicitly
 under each node in the order they were first connected; connection endpoints are node-qualified and
@@ -374,21 +419,19 @@ declared in the same file** (or qualified as `<node>.<interface>` / `<subsystem>
 to disambiguate when multiple nodes declare identical interface names). The `RosConnection`
 alternative triggers a `ClassCastException` in three separate validator methods.
 
-**Never synthesise a `connections:` block that the source did not declare.** When transcribing an
-existing system that has no `connections:`, emit none — even when pub/sub pairs look obvious.
-`MatchPortMsgs` requires *object identity* on the type, which cannot be confirmed without resolving
-every referenced `.ros2`, so an invented connection is an unverifiable claim that may hard-error.
-Instead, list the candidate label pairs in your response and let the caller decide. (`MT.rossystem`
-has 32 nodes and several obvious pairings — such as `relay`/`controller_server` on
-`kmriiwa/base/command/cmd_vel` — and declares zero connections. Leave it that way.)
+**Authoring vs. transcribing.** When you build or extend a system, wire it with
+`ros_auto_connect` (*Wiring connections with `ros_auto_connect`*). The server resolves both ends,
+so preselected candidates satisfy `MatchPortMsgs`, and only the ambiguous receivers are yours to
+decide.
 
-`extract_rossystem.py` computes those candidate pairs for you — same interface name, same type
-string, legal direction — and writes them to its `--json` record without emitting any. **That list
-is for your report, not for the file.** Having the pairs computed changes nothing about this rule:
-name and type equality is necessary but not sufficient, because `MatchPortMsgs` compares by object
-identity. Scoping to one launch file does prune the obviously wrong ones — on
-`bringup_onboard.launch.py` it leaves exactly one candidate — but "one candidate" is still a
-proposal for the caller, not a licence to wire it.
+**When transcribing an existing system from launch files, write only the connections the source
+declares.** If it declares none, emit none, even when pairs look obvious. (`MT.rossystem` has 32
+nodes and several obvious pairings, such as `relay`/`controller_server` on
+`kmriiwa/base/command/cmd_vel`, and declares zero connections. Leave it that way.) Run the
+`ros_auto_connect` dry run and list its candidates, preselected first, in your report for the caller
+to decide; apply them only when asked. `extract_rossystem.py` also records name-and-type candidate
+pairs in its `--json` output; prefer the dry run, which resolves the types through the workspace and
+also covers remaps and subsystems.
 
 ### 4b. `from:` is `package.NODE`; arrow targets are `artifact::interface`
 
@@ -658,6 +701,8 @@ system's components and reads `rosnode.rosinterfaces` — populated only from th
 `assets/node_index.json`'s `_systems` entries (built by `build_node_index.py`) record each
 catalogued system's nodes and their declared interfaces, so this is checkable before authoring
 anything: an entry with every node's `"interfaces": {}` is the zero-exposure case above.
+`ros_auto_connect` applies the same rule: only a subsystem's declared interfaces become
+candidates, and inherited ones it would otherwise have matched are reported in `skipped`.
 
 **Never let one real node be reachable two ways in the same file** — directly under this file's
 own `nodes:` **and** through a `subSystems:` entry that also provides it. Two distinct `RosNode`
@@ -889,9 +934,10 @@ Run every line against the emitted file:
    things — the caller's verbatim value, a `Glob`-confirmed on-disk launch file, or the sentinel —
    with the rung stated in a trailing comment. Anything else is fabricated: replace it with the
    sentinel. Every connection is `- [a , b]` where `a` is a `pub->`/`ss->`/`as->` label and `b` is
-   the matching `sub->`/`sc->`/`ac->` label — node-qualified and quoted (`"node::label"`) as
-   `ros_connect_interfaces` writes them; a bare label only where it is unique in the system. Both `type:` strings identical. Every label declared
-   in this file. Every node in a process's `nodes: [...]` declared in `nodes:`.
+   the matching `sub->`/`sc->`/`ac->` label — node-qualified and quoted (`"node::label"`, or
+   `"subsystem::node::label"` for an interface declared inside a subsystem) as the MCP tools write
+   them; a bare label only where it is unique in the system. Both `type:` strings identical. Every
+   label declared in this file or exposed by a referenced subsystem. Every node in a process's `nodes: [...]` declared in `nodes:`.
 10. `from:` in `.rossystem` is `<packageName>.<nodeName>` — **the node, never the artifact** — read
     from the **model contents**, never from the `.ros2` filename (76/253 files have a stem that
     differs from the declared package; `bt_navigator.ros2` declares `nav2_bt_navigator`). In the
@@ -948,6 +994,10 @@ Run every line against the emitted file:
     therefore read by hand). Anything the scripts emitted is unchanged unless a §8e resolution
     required editing that exact line.
 20. **Built and validated with the toolchain.** Every `.ros` spec, `.ros2` package/node/interface/parameter/QoS, and `.rossystem` node/subsystem/connection/parameter/process went through the semantic MCP tools (`ros_add_spec`, `ros2_*`, `ros_*` — or the report says no MCP server was connected), and `validate_ros_model` returned `"isValid": true` for every file you wrote, with its dependencies in the workspace. No `.layout` file and no coordinates were produced.
+21. **Connections are justified.** Every connection is a preselected `ros_auto_connect` candidate,
+    a candidate you chose with a reason stated in the report, or a `ros_connect_interfaces` call with
+    a stated reason. Receivers left open are listed in the report as open decisions. When
+    transcribing, only connections the source declares were written (§4).
 
 ## Validation
 
