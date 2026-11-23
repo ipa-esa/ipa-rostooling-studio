@@ -1,0 +1,12 @@
+probe_msgs:
+  srvs:
+    Ping
+      request
+        string q
+  msgs:
+    Reading
+      message
+        float64 value
+    Pair
+      message
+        'probe_msgs/msg/Reading' first

@@ -127,19 +127,28 @@ def check_rules(files, add):
     """
     src = open(os.path.join(ROOT, "scripts", "rosmodel_lint.py"),
               encoding="utf-8").read()
-    implemented = set(re.findall(r'"(RM\d{3})"', src))
+    retired = retired_rules(src)
+    implemented = set(re.findall(r'"(RM\d{3})"', src)) - retired
     cited = {}
     for f in files:
         text = open(os.path.join(ROOT, f), encoding="utf-8", errors="replace").read()
         for rid in set(RULE_RE.findall(text)):
             cited.setdefault(rid, set()).add(f)
-    for rid in sorted(set(cited) - implemented):
+    # A retired id may still be cited: history, and the README's table of retired rules.
+    for rid in sorted(set(cited) - implemented - retired):
         add("ERROR", ", ".join(sorted(cited[rid])),
             "cites %s, which rosmodel_lint.py does not emit" % rid)
     # RM000 is the internal parse-failure id and is deliberately not written up.
     for rid in sorted(implemented - set(cited) - {"RM000"}):
         add("WARNING", "scripts/rosmodel_lint.py",
             "emits %s, which no document mentions" % rid)
+
+
+def retired_rules(src):
+    """The ids in rosmodel_lint.py's RETIRED_RULES: rules removed because the language server
+    reports them. They are neither implemented nor counted, but may be cited."""
+    m = re.search(r"^RETIRED_RULES = \((.*?)\)", src, re.S | re.M)
+    return set(re.findall(r'"(RM\d{3})"', m.group(1))) if m else set()
 
 
 def rule_count():
@@ -151,7 +160,7 @@ def rule_count():
     would have made them wrong.
     """
     src = open(os.path.join(ROOT, "scripts", "rosmodel_lint.py"), encoding="utf-8").read()
-    numeric = set(re.findall(r'"(RM\d{3})"', src)) - {"RM000"}
+    numeric = set(re.findall(r'"(RM\d{3})"', src)) - {"RM000"} - retired_rules(src)
     variants = set(re.findall(r'"(RM\d{3}[A-Z])"', src))
     return len(numeric) + len(variants)
 

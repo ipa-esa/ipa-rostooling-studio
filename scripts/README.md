@@ -148,45 +148,25 @@ every field. The `.ros` branch therefore runs its own indentation-stack parser
 opens a `BEGIN`, a decrease closes `END`s, and **absolute column values are never assumed**. The
 corpus steps 3/4/5/6/7/9 spaces and the real parser accepts all of it.
 
-`RosValidator.xtend` declares **no `@Check` at all** on `TopicSpec`, `MessagePart` or
-`AbstractType`. Apart from `checkNameConventionsPackage` there is no validator to mirror here, so
-these rules encode the **grammar** rather than a validator, and every ERROR was confirmed against
-`ask_oracle.py` rather than guessed.
+The `.ros` grammar itself (package and spec structure, type tokens, arrays, field lines) is the
+language server's to check; the rules that copied it (`RM070`, `RM071`, `RM073`-`RM077`, `RM079`)
+were retired on 2026-11-23. What stays here is what the server accepts but is still worth saying.
 
 | ID | Severity | Check | Mirrors / oracle evidence |
 |---|---|---|---|
-| `RM070` | ERROR | Not a `PackageSet`: no package, package line indented, or missing trailing `:` | `Ros.xtext:11-14`, `Ros.xtext:25-27` |
-| `RM071` | ERROR | Unknown member at package level; (WARNING) empty package or empty spec block | `Ros.xtext:25-46` |
 | `RM072` | WARNING | `msgs:`/`srvs:`/`actions:` block repeated in one package | `Ros.xtext:30-45` — parses (repeated alternation), still a generator defect |
-| `RM073` | ERROR | Spec-name or body-keyword structure wrong: trailing `:` on a spec name, multi-token spec line, missing/foreign body keyword | `Ros.xtext:81-104`; oracle on a trailing colon: `extraneous input ':' expecting RULE_BEGIN` |
-| `RM074` | ERROR | Unknown type token, or an array form that does not exist (`time[]`, `duration[]`, `Header[]`) | `Basics.xtext:210-213`; oracle on `time[]`: `no viable alternative at input '[]'` |
-| `RM075` | ERROR | Fixed- or bounded-size array (`float32[3]`, `string<=10`) | `Basics.xtext:296-375` hard-codes `'[]'`; oracle: `Invalid token float32[3` — a **lexer** error |
-| `RM076` | WARNING | Quoted spec reference not shaped `<package>/msg/<Type>` | `RosQNP.xtend` qualifies specs as `pkg + "/msg/" + name`; see severity note below |
-| `RM077` | ERROR | Field-line token structure wrong: odd token count, stray spaced `=`, constant in a Type position, or a field name that is not a legal `Data` | `Basics.xtext:201-208`; oracle on `uint8 FAN_OFF = 0`: `mismatched input '=' expecting RULE_END` |
 | `RM078` | WARNING | More than one field on a line | **Legal** — `MessagePart+=MessagePart*` has no line separator and RosTooling's own `basic_msgs/common_msgs.ros` does it. House style only |
-| `RM079` | ERROR | File uses the **brace** serialisation, not the indentation syntax | `RosTooling-NadiaHG` fork's concrete syntax; STATUS.md open question N2 |
 | `RM080` | INFO | A `message`/`request`/`response`/`goal`/`result`/`feedback` section has no fields | Legal and common; surfaced because a bodiless body is also what data loss looks like |
 
-`RM009` (duplicate name), `RM010` (uppercase package name, **ERROR**), `RM015`, `RM016`, `RM020`,
-`RM021`, `RM040` (unsorted block) and `RM044` (`dependencies:`) are shared with the other two file
-types and fire in `.ros` too. So do all the byte/layout rules `RM001`–`RM008T`.
+`RM009` (duplicate name), `RM015`, `RM040` (unsorted block) and `RM044` (`dependencies:`) are
+shared with the other two file types and fire in `.ros` too. So do all the byte/layout rules
+`RM001`–`RM008T`.
 
-**Two severities chosen deliberately against the obvious reading:**
+**`RM078` is a WARNING, not an ERROR.** Multiple fields per line parse fine. Rejecting them would
+fail files the real parser accepts — including the fixtures in `tests/oracle/cases/_deps`, which
+the oracle rates ACCEPTED 0E/0W.
 
-- **`RM076` is a WARNING, not an ERROR**, even though the oracle reports an unresolvable reference
-  as an ERROR (`Couldn't resolve reference to TopicSpec 'AllTypes'`). Linking is cross-file and
-  this linter sees one file at a time, so it cannot distinguish "wrong shape" from "defined in a
-  file I was not given". The hint says to treat it as an error.
-- **`RM078` is a WARNING, not an ERROR.** Multiple fields per line parse fine. Rejecting them
-  would fail files the real parser accepts — including the fixtures in `tests/oracle/cases/_deps`,
-  which the oracle rates ACCEPTED 0E/0W.
-
-An **unquoted, non-primitive** type token *is* `RM074` at ERROR, and that is not a guess: a spec's
-qualified name always contains `/`, which no bare Xtext `ID` can express, so such a token can never
-link — not even for a type declared three lines above it in the same package. Confirmed both ways
-against the oracle (bare `AllTypes` → rejected; `"probe_msgs/msg/AllTypes"` → ACCEPTED 0E/0W).
-
-**Corpus behaviour.** Over the 31 `.ros` files in `ros-model-examples`, the structural rules
+**Corpus behaviour (2026-07-21, before the grammar rules were retired).** Over the 31 `.ros` files in `ros-model-examples`, the structural rules
 `RM070`–`RM080` produce **zero** ERRORs. As of 2026-07-21 `RM001` is a WARNING, so there are now **zero** `.ros` ERRORs. (Previously 126 `RM001` tabs, all in the four
 `slam_toolbox_msgs.ros` copies. RosTooling's own `basic_msgs/common_msgs.ros` and `ros_core.ros`
 lint with **0 errors**.
@@ -195,34 +175,23 @@ lint with **0 errors**.
 
 | ID | Severity | Check | Mirrors |
 |---|---|---|---|
-| `RM010` | **ERROR** | Uppercase in a package name | `checkNameConventionsPackage` (R3) |
-| `RM011` | WARNING | Uppercase in an artifact name | `checkNameConventionsArtifact` (R2) |
-| `RM012` | WARNING | Uppercase in a node name | `checkNameConventionsNode` (R1) |
-| `RM013` | WARNING | Uppercase in a parameter name's **final dot-segment** | `checkNameConventionsParameters` (R4) |
 | `RM014` | WARNING | `/` in a node/artifact name (grammar-legal) | rossdl launch generation |
 | `RM015` | ERROR | Empty interface/parameter name (`'':`) | profile rule 20 |
-| `RM016` | ERROR | RosNames position not expressible as `ROS_CONVENTION_A \| ID` | `Basics.xtext:394` |
 
-The ERROR/WARNING split in RM010–RM013 is the single most important severity distinction in the
-toolchain: four structurally identical Xtend loops, but **only the package one calls `error()`**.
-The message wording tracks it precisely ("are not allowed" vs "are not recommended"). RM013 is a
-WARNING despite its validator message saying "has to follow" — the call is `warning()`, and the
-call wins over the prose.
-
-RM013 implements the dot-suffix carve-out exactly: an uppercase character at index `i` is forgiven
-iff `name[i:]` still contains a `.`. So `Foo.bar` is clean and `foo.Bar` warns.
+Uppercase in package, artifact, node and parameter names (the validator's
+`checkNameConventions*`: an error for packages, warnings for the rest) and names a `RosNames`
+position cannot express are reported by the language server; `RM010`–`RM013` and `RM016` copied
+them until 2026-11-23.
 
 ### Quoting
 
 | ID | Severity | Check | Mirrors |
 |---|---|---|---|
-| `RM020` | ERROR | Unquoted `EString` containing `.` `/` `::` `-` or space | profile rules 10, 12, 13, 14 |
-| `RM021` | ERROR | Quoted name in a `RosNames` position | profile rule 7 |
 | `RM022` | WARNING | `.ros2`/`.rossystem` name unquoted where a bare `ID` would parse | profile rules 11, 12 |
 
-`RM020` and `RM021` are opposites and both are ERRORs, because `EString = STRING | ID` while
-`RosNames = ROS_CONVENTION_A | ID | 'node'` has **no `STRING` alternative**. Quoting is mandatory
-in one position and a parse error in the other.
+A value that needs quotes and lacks them, and a quoted name in a `RosNames` position (which has no
+`STRING` alternative), are parse errors the language server reports; `RM020` and `RM021` copied
+them until 2026-11-23. `RM022` stays: it asks for quotes where a bare `ID` would parse.
 
 Per profile rule 15, the linter **never** flags the opposite quote character — Xtext's `STRING`
 accepts both `'` and `"`, so the difference vanishes at parse time.
@@ -231,43 +200,26 @@ accepts both `'` and `"`, so the difference vanishes at parse time.
 
 | ID | Severity | Check | Mirrors |
 |---|---|---|---|
-| `RM030` | ERROR | `msgs:` / `srvs:` / `actions:` block in a `.ros2` file | grammar-subset §5.2 |
 | `RM031` | INFO | Newer QoS field (`lease_duration`, `liveliness`, `lifespan`, `deadline`) -- legal since the pin was lifted 2026-07-21; flagged for consumer portability only | profile rule 32 |
-| `RM032` | ERROR | Unknown QoS field | `Ros2.xtext:30-42` |
-| `RM033` | ERROR | Bad or quoted QoS enum value; non-integer `depth` | `Ros2.xtext:32-37` |
+| `RM033` | WARNING | Negative QoS `depth`: legal (the server accepts it) but meaningless at runtime. Bad QoS values are the language server's (retired 2026-11-23, see *Retired rules*) | `Ros2.xtext:35` (DECINT admits `-`) |
 | `RM034` | WARNING | `profile:` / `history:` / `depth:` used | profile rule 33 |
-| `RM035` | ERROR | Duration not a quoted int32 digit-string nor `infinite` | `CheckQoS`→`CheckDuration` (R14) |
-| `RM036` | ERROR | Unknown key in a node block, interface, or parameter | `Ros.xtext:121-159`, `Ros2.xtext:49-124` |
-| `RM037` | ERROR | Unknown key at package/system level | `Ros2.xtext:13-24` |
-| `RM038` | ERROR | Missing mandatory member (`node:`, `type:`, `from:`, `value:`) | grammar (non-optional assignments) |
-| `RM039` | WARNING; ERROR where the grammar fixes the order (AmentPackage members, a `.rossystem` RosNode's members, `implements:` first in a plugin, the inline `{ ... }` pluginslot) | Member/block ordering deviates from canonical | profile rules 21–25, 27; `Ros2.xtext:13-28`, `RosSystem.xtext:61-81` |
+| `RM039` | WARNING | Member/block ordering deviates from canonical. Where the grammar fixes the order, the language server reports it as a parse error | profile rules 21–25, 27 |
 | `RM040` | WARNING | Entries within a block not alphabetically sorted | profile rule 26 |
-| `RM041` | ERROR | Unreachable, unknown, or quoted parameter type | grammar-subset §5.3, profile rule 16 |
 | `RM042` | ERROR | `True`/`False` instead of `true`/`false` | profile rule 18 (**silent corruption**) |
 | `RM043` | ERROR | `type: Double` with an integer literal | profile rule 19 (**silent corruption**) |
 | `RM044` | WARNING | Zero-corpus-support construct (`dependencies:`, `ns:`, `namespace:`) | profile §3 |
 | `RM045` | WARNING | `Struct` / `List` / `Base64` parameter type | grammar-subset §5.4, profile §3 |
 | `RM046` | INFO | `Array [` with a space before the bracket | profile rule 17 |
-| `RM047` | WARNING | A plugin base uses a loader other than `pluginlib`; the validator accepts it only when exactly one enabled language plugin registers that loader, which the linter cannot see | `RosValidator.checkPluginBaseLoader`, added 2026-11-23 |
-| `RM048` | ERROR | Plugin and slot consistency: a slot's parameter is also a node parameter or another slot's; a slot default implements another base; in a `.rossystem`, a plugin attached twice to a slot, several plugins on a slot without `multiple: true`, an attached plugin of another base, or an unknown slot (the last three only when the host node's `.ros2` sits next to the file) | `RosValidator.checkNodePluginSlots`, `RosSystemValidator.checkRosNodePlugins`, added 2026-11-23 |
 | `RM095` | WARNING (`.ros2`) / ERROR (`.rossystem`) | Parameter value is a quoted string shaped like `[...]`/`{...}` instead of a real list | `CheckParameterValue` (validator-rules §2.6), added 2026-09-03 (**silent corruption**) |
 
 ### `.rossystem` structure
 
 | ID | Severity | Check | Mirrors |
 |---|---|---|---|
-| `RM050` | ERROR | Connection endpoint is not a declared interface | `checkIfInterfaceInSystem` (S3) |
-| `RM051` | ERROR | Bad connection direction / mismatched pairing | `checkPortPatterns` (S4) |
-| `RM052` | ERROR | `fromFile:` missing `/`, or empty string | `fromFileHelper` (S2) |
-| `RM053` | WARNING | `fromFile:` absent — triggers the NPE bug | `fromFileHelper` (S2) |
-| `RM054` | ERROR | Process references an undeclared node | `checkIfNodeInSystem` (S1) |
-| `RM055` | ERROR | Missing or unknown arrow prefix | `RosSystem.xtext:81-112` |
 | `RM056` | WARNING | Arrow target / parameter ref not `artifact::name` | profile rule 30 |
 | `RM057` | WARNING | `from:` not `<package>.<node>` | profile rule 29 |
-| `RM058` | ERROR | Duplicate interface local name **within one node** | profile rule 28 |
 | `RM059` | WARNING | Top-level block order | profile rule 25 |
-| `RM060` | ERROR | Connection is not a 2-element list | `RosSystem.xtext:126-127`, validator-rules §3.4 |
-| `RM061` | INFO | `subSystems:` used — demoted from WARNING 2026-09-03; the reuse checks RM090-RM093 apply, but presence alone is not a defect and must not be read as a reason to omit a requested subsystem (SKILL.md §8d) | profile §3, validator-rules §3.5 |
+| `RM061` | INFO | `subSystems:` used — demoted from WARNING 2026-09-03; the reuse checks RM090-RM092 apply, but presence alone is not a defect and must not be read as a reason to omit a requested subsystem (SKILL.md §8d) | profile §3, validator-rules §3.5 |
 | `RM062` | WARNING | `/` in a `.rossystem` node name | rossdl launch generation |
 | `RM063` | WARNING | `processes:` used | profile §3 |
 | `RM064` | INFO | Connected interfaces have differing trailing names | `MatchPortMsgs` (S5), advisory only |
@@ -278,13 +230,50 @@ accepts both `'` and `"`, so the difference vanishes at parse time.
 | `RM097` | WARNING (INFO when all closed) | Items the extractors could not read that are still open — counts `# FLAG`/`# OPEN`/`# UNRESOLVED`, and reports them against the `# EXTRACTOR-FLAGS: N` stamp the scripts write, so the original count survives any rewording | SKILL.md "Converting real source" + §8e, self-check 18 |
 | `RM098` | ERROR | Launch substitution expression `$(...)` in a parameter value has unbalanced parentheses or an unknown substitution name | rossystem-syntax §5 |
 
-`RM051` enforces the only three legal pairings, with `from` always the server/publisher side:
+### Retired rules (2026-11-23)
 
-| `from` | `to` |
-|---|---|
-| `pub->` | `sub->` |
-| `ss->` | `sc->` |
-| `as->` | `ac->` |
+These copied a grammar or validator rule of the RosTooling language server, and the server reports
+every case of them: `tests/fixtures/server_coverage` holds one case per check with the server's
+finding. Ask the server with `--server` (its findings are `RM100`) or run `validate_ros_model`. A
+retired id is never reused. `RM053` and `RM058` were retired after RosTooling `df327891`: a system
+without `fromFile:` is valid, and the server now rejects duplicate interface names in a node.
+
+| ID | Checked | Now |
+|---|---|---|
+| `RM010` | Uppercase in a package name | language server |
+| `RM011` | Uppercase in an artifact name | language server |
+| `RM012` | Uppercase in a node name | language server |
+| `RM013` | Uppercase in a parameter name's **final dot-segment** | language server |
+| `RM016` | RosNames position not expressible as `ROS_CONVENTION_A \ | language server |
+| `RM020` | Unquoted `EString` containing `.` `/` `::` `-` or space | language server |
+| `RM021` | Quoted name in a `RosNames` position | language server |
+| `RM030` | `msgs:` / `srvs:` / `actions:` block in a `.ros2` file | language server |
+| `RM032` | Unknown QoS field | language server |
+| `RM035` | Duration not a quoted int32 digit-string nor `infinite` | language server |
+| `RM036` | Unknown key in a node block, interface, or parameter | language server |
+| `RM037` | Unknown key at package/system level | language server |
+| `RM038` | Missing mandatory member (`node:`, `type:`, `from:`, `value:`) | language server |
+| `RM041` | Unreachable, unknown, or quoted parameter type | language server |
+| `RM047` | A plugin base uses a loader other than `pluginlib`; the validator accepts it only when exactly one enabled language plugin registers that loader, which the linter cannot see | language server |
+| `RM048` | Plugin and slot consistency: a slot's parameter is also a node parameter or another slot's; a slot default implements another base; in a `.rossystem`, a plugin attached twice to a slot, several plugins on a slot without `multiple: true`, an attached plugin of another base, or an unknown slot (the last three only when the host node's `.ros2` sits next to the file) | language server |
+| `RM050` | Connection endpoint is not a declared interface | language server |
+| `RM051` | Bad connection direction / mismatched pairing | language server |
+| `RM052` | `fromFile:` missing `/`, or empty string | language server |
+| `RM053` | `fromFile:` absent — triggers the NPE bug | language server |
+| `RM054` | Process references an undeclared node | language server |
+| `RM055` | Missing or unknown arrow prefix | language server |
+| `RM058` | Duplicate interface local name **within one node** | language server |
+| `RM060` | Connection is not a 2-element list | language server |
+| `RM070` | Not a `PackageSet`: no package, package line indented, or missing trailing `:` | language server |
+| `RM071` | Unknown member at package level; (WARNING) empty package or empty spec block | language server |
+| `RM073` | Spec-name or body-keyword structure wrong: trailing `:` on a spec name, multi-token spec line, missing/foreign body keyword | language server |
+| `RM074` | Unknown type token, or an array form that does not exist (`time[]`, `duration[]`, `Header[]`) | language server |
+| `RM075` | Fixed- or bounded-size array (`float32[3]`, `string<=10`) | language server |
+| `RM076` | Quoted spec reference not shaped `<package>/msg/<Type>` | language server |
+| `RM077` | Field-line token structure wrong: odd token count, stray spaced `=`, constant in a Type position, or a field name that is not a legal `Data` | language server |
+| `RM079` | File uses the **brace** serialisation, not the indentation syntax | language server |
+| `RM093` | `subSystems:` written as a bracket list `[...]` or as a `- item` block sequence — the grammar takes neither (settled 2026-08-14: oracle cases `17-subsystems-multi` / `18-neg-subsystems-dash`, `mismatched input '-' expecting RULE_END`). N entries are N bare lines | language server |
+| `RM094` | Full-line comment at column 0 inside an indented block | language server |
 
 ### Language server (added 2026-11-23)
 
@@ -326,10 +315,8 @@ in `--hook` mode) for a workspace whose references are heavily project-local. Se
 | `RM090` | ERROR | A node label is declared directly under `nodes:` **and** is also reachable through a `subSystems:` entry | `.rossystem` |
 | `RM091` | WARNING | A `subSystems:` entry doesn't resolve, itself declares another `subSystems:` (nesting risk), or resolves but exposes zero `interfaces:` on any node | `.rossystem` |
 | `RM092` | WARNING | A local node and a node reachable via `subSystems:` resolve the same `from:` under different labels — likely the same real node modelled twice | `.rossystem` |
-| `RM094` | ERROR | Full-line comment at column 0 inside an indented block | `AbstractIndentationTokenSource` closes every open block; oracle case `19-neg-col0-comment`: `missing EOF at ''` |
-| `RM093` | ERROR | `subSystems:` written as a bracket list `[...]` or as a `- item` block sequence — the grammar takes neither (settled 2026-08-14: oracle cases `17-subsystems-multi` / `18-neg-subsystems-dash`, `mismatched input '-' expecting RULE_END`). N entries are N bare lines | `.rossystem` |
 
-`RM081`/`RM084` are WARNING, not ERROR, for the same reason `RM076` is: a genuinely
+`RM081`/`RM084` are WARNING, not ERROR, because the linter sees one file at a time: a genuinely
 project-local package/node is legitimate, and the linter cannot distinguish that from a typo of a
 standard one. `RM082`/`RM085`/`RM086` are ERROR because in those cases the package/node *is*
 known-complete in the catalogue, so a name that doesn't match it is a real defect, not a
@@ -535,10 +522,8 @@ constraint "moot under the pinned profile … retained in documentation, not imp
 validator". Both are implemented: `RM031` (INFO -- it was an ERROR only while the oracle was
 pinned to the 2024 build; the rule table above is authoritative) fires on the field's presence,
 and `RM035`
-additionally validates the value, so the check exists and is ready for the day the oracle is
-rebuilt. Note that `validator-rules.md` §0.3 confirms `CheckQoS` is **not even present in the
-shipped JAR bytecode** — so `RM035` mirrors a HEAD-only rule that the pinned oracle would neither
-enforce nor reward.
+additionally validated the value. *Amended 2026-11-23:* the current server enforces the duration
+rule itself (`tests/fixtures/server_coverage/RM035`), so `RM035` was retired.
 
 **3. `default:` is accepted in parameters — the linter was right and the specs were wrong.**
 Linting the corpus surfaced `default:` in real `.ros2` parameters, which the linter initially
@@ -668,10 +653,11 @@ the script appears in this README and vice versa, with no orphans in either dire
 
 ### Whole-corpus run — 336 files, 0 crashes
 
-**Re-measured 2026-08-14** against the current script. It emits **90** distinct ids -- RM000-RM101
-plus the `RM002B` and `RM008T` variants -- which is **89 rules**<!--@count:rules-->, RM000 being the internal
-read/parse failure rather than a rule. (RM047 and RM048, the Phase 4 plugin rules, and RM100 and
-RM101, the language-server findings, were added 2026-11-23 and took no part in this sweep.) (RM094, the column-0 comment check, and the RM090/RM033
+**Re-measured 2026-08-14** against the current script. The script now emits **56** distinct ids
+(RM000-RM101 less the 34 retired on 2026-11-23, plus the `RM002B` and `RM008T` variants), which is
+**55 rules**<!--@count:rules-->, RM000 being the internal read/parse failure rather than a rule.
+The counts below are from the 2026-08-14 run, when it emitted 81 rules; RM100 and RM101 (the
+language-server findings) and the retirements came after it. (RM094, the column-0 comment check, and the RM090/RM033
 severity corrections landed after this sweep and change none of its counts: no corpus file
 exhibits any of the three.) This supersedes the
 counts the three amendments above call stale, and adds the `.ros` corpus, which the old 305-file

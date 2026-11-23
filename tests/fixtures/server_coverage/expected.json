@@ -1,5 +1,5 @@
 {
-  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8 (RM053 and RM058 rechecked with df327891, which adds the duplicate-interface-name check), no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/*",
+  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8 (cases named <rule>-<check> added 2026-11-23 in step 2; RM053 and RM058 rechecked with df327891, which adds the duplicate-interface-name check), no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/*",
   "cases": {
     "RM010": {
       "file": "probe_pkg.ros2",
@@ -181,6 +181,56 @@
       "file": "probe_sys.rossystem",
       "server": "ERROR",
       "server_message": "missing EOF at ''"
+    },
+    "RM033-bad-block-ref-prefix": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '-' expecting RULE_END"
+    },
+    "RM033-bad-lifecycle-state": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input 'Configuring'"
+    },
+    "RM033-quoted-lifecycle": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Couldn't convert 'null' to Boolean."
+    },
+    "RM035-duration-overflow": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Durations of lease_duration, lifespan, deadline should be specified as a string of nanoseconds which can convert to int, or as infinite"
+    },
+    "RM036-active-in-on-plain-node": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "The 'active_in' property can only be specified if the parent node is configured as a lifecycle node ('lifecycle: true')"
+    },
+    "RM036-block-on-nodeless-artifact": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '@' expecting RULE_END"
+    },
+    "RM038-system-parameter-without-value": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input '' expecting RULE_BEGIN"
+    },
+    "RM039-block-before-from": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input '@' expecting 'from:'"
+    },
+    "RM041-array-without-element": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '' expecting '['"
+    },
+    "RM073-srv-without-response": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "missing 'response' at ''"
     }
   }
 }

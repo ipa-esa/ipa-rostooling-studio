@@ -96,11 +96,11 @@ it). A single, flat `subSystems:` entry is fine and tested — see rule 12. Use 
 2024-08-01 build. If the LSP component is running, treat its diagnostics as authoritative for
 `.ros2` and fix what it reports.
 
-`.rossystem` has **no language server at all** — none was ever built. Its only check is the
-`rosmodel_lint.py` PostToolUse hook, which is a modelled reimplementation of
-`RosSystemValidator`, not the real thing. When that hook blocks, fix the file and rewrite it;
-the hook fires *after* the write, so the bad content is already on disk and only a follow-up
-edit clears it.
+The `rosmodel_lint.py` PostToolUse hook checks provenance, style and silent-corruption rules only;
+since 2026-11-23 it no longer copies the grammar or the validator. Grammar and validation of
+`.ros`, `.ros2` and `.rossystem` come from the language server: `validate_ros_model`, or
+`rosmodel_lint.py --server`. When the hook blocks, fix the file and rewrite it; the hook fires
+*after* the write, so the bad content is already on disk and only a follow-up edit clears it.
 
 Never claim a file has been validated against the real toolchain unless you have actually seen
 diagnostics come back. Say "emitted per the pinned profile, not executed" instead.

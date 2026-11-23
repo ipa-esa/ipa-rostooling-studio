@@ -205,7 +205,7 @@ skills/ros-model/
   ros-plot/                     mirrors commands/ros-plot.md
   update-ros-catalog/           mirrors commands/update-ros-catalog.md
   ros-modeler/                  mirrors agents/ros-modeler.md
-scripts/rosmodel_lint.py        static linter, 81 rules (.ros / .ros2 / .rossystem)
+scripts/rosmodel_lint.py        static linter, 55 rules: provenance, style, silent corruption; --server adds the language server
 scripts/ros_plot.py             /ros-plot backend: .rossystem -> self-contained interactive HTML (read-only)
 scripts/ros_studio.py           deterministic engine: init (seed) / generate (emit + lint, oracle) / diff
 scripts/_studio_common.py       shared HTML/CSS/JS primitives + emit vocabulary (imported by both ros_plot and ros_studio)

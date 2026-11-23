@@ -17,10 +17,10 @@ Both of those are why `wrapNodesInSubsystem` pins an explicit, subsystem-wide-un
 and sets `exposed` on the extracted copy, rather than letting each file derive its own:
 a `connections:` endpoint is a label STRING, and two files deriving independently do not agree.
 
-Without that, `generate` writes two files that lint clean individually and are broken together:
+Without that, `generate` writes two files that are each fine on their own and broken together;
+the language server reports the connection (`rosmodel_lint.py --server` shows it as `RM100`):
 
-    ERROR  demo_sys.rossystem:10  RM050  Connection 'to' endpoint 'info' is not a declared
-                                        interface of system 'demo_sys'.
+    ERROR  demo_sys.rossystem:10  Couldn't resolve reference to RosInterface 'info'.
 
 `check_wrap` in `tests/studio_roundtrip.py` regenerates from this project and asserts that
 every connection endpoint in every emitted file resolves against a label some emitted file

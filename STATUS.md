@@ -9,6 +9,11 @@ built, and all 24 oracle cases execute on this machine. The original summary sai
 "has never been executed, and cannot be on this machine"; that was true when written and was
 overtaken by section 2.1 the same week. Everything below is labelled accordingly.
 
+> *Amended 2026-11-23.* `rosmodel_lint.py` was cut down to what the language server does not
+> check: 34 rules that copied the grammar or the validator were retired (see `scripts/README.md`,
+> *Retired rules*), and `--server` asks the server itself. Rule counts and rule ids in the dated
+> sections below describe the linter as it was then.
+
 ---
 
 ## 1. DONE and actually verified

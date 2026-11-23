@@ -617,7 +617,7 @@ Four decisions the raw production does not answer, resolved:
 - **Spacing** — `["a", "b"]`, one space after each comma, none inside the brackets.
 
 Every name in `nodes: [...]` **must** also appear as a key in this file's `nodes:` block, or
-`checkIfNodeInSystem` raises an ERROR (`rosmodel_lint.py` mirrors this as `RM054`).
+`checkIfNodeInSystem` raises an ERROR, which `validate_ros_model` reports (and `rosmodel_lint.py --server` as `RM100`).
 
 `subSystems:` — 19 files, but every sampled example is low quality (one indents its reference with a
 tab and leaves it bare). Emit it whenever composition is requested — see SKILL.md §8d — normalised

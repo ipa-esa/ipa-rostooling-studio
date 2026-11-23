@@ -1,0 +1,17 @@
+probe_pkg:
+  artifacts:
+    talker:
+      node: talker
+      publishers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'
+          qos:
+            reliability: reliable
+      parameters:
+        'rate':
+          type: Array
+    listener:
+      node: listener
+      subscribers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'

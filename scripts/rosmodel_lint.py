@@ -63,6 +63,18 @@ INFO = "INFO"
 
 SEVERITY_ORDER = {ERROR: 0, WARNING: 1, INFO: 2}
 
+# Rules retired on 2026-11-23 (the rosmodel_lint cut, step 2). Each copied a grammar or validator
+# rule of the RosTooling language server, and the server reports every case of it
+# (tests/fixtures/server_coverage): ask it with --server (RM100), or run validate_ros_model.
+# A retired id is never reused. RM033 and RM039 are not retired: each keeps a warning the server
+# does not give (a negative QoS depth; members out of their conventional order).
+RETIRED_RULES = (
+    "RM010", "RM011", "RM012", "RM013", "RM016", "RM020", "RM021", "RM030", "RM032", "RM035",
+    "RM036", "RM037", "RM038", "RM041", "RM047", "RM048", "RM050", "RM051", "RM052", "RM053",
+    "RM054", "RM055", "RM058", "RM060", "RM070", "RM071", "RM073", "RM074", "RM075", "RM076",
+    "RM077", "RM079", "RM093", "RM094",
+)
+
 
 # --------------------------------------------------------------------------------------
 # Catalogue indexes (assets/type_index.json, assets/node_index.json) -- built by
@@ -561,63 +573,14 @@ def load_local_nodes(base_dir):
     return _local_nodes_cache[key]
 
 
-_local_plugin_model_cache = {}
-
-
-def load_local_plugin_model(base_dir):
-    """The plugin side of the .ros2 files NEXT TO the linted file (same scope as
-    load_local_nodes): {'hosts': {'pkg.node': {slot: {'base': ref, 'multiple': bool}}},
-    'plugins': {'pkg.Plugin': base ref}}. Slot attachments in a .rossystem are checked against it
-    when the host node is project-local; hosts from the catalogue are left to the validator."""
-    key = os.path.abspath(base_dir or ".")
-    if key in _local_plugin_model_cache:
-        return _local_plugin_model_cache[key]
-    model = {"hosts": {}, "plugins": {}}
-    bni = _build_node_index_module()
-    if bni is not None and HAVE_YAML:
-        for path in sorted(glob.glob(os.path.join(key, "*.ros2"))):
-            try:
-                root = bni.compose_yaml(path)
-            except Exception:
-                continue
-            for pkg_key, pkg_val in mapping_items(root):
-                if not is_scalar(pkg_key):
-                    continue
-                for _akey, aval in mapping_items(mapping_get(pkg_val, "artifacts")):
-                    if not is_mapping(aval):
-                        continue
-                    for pkey, pval in mapping_items(mapping_get(aval, "plugins")):
-                        impl = mapping_get(pval, "implements") if is_mapping(pval) else None
-                        if is_scalar(pkey):
-                            model["plugins"]["%s.%s" % (pkg_key.value, pkey.value)] = (
-                                impl.value.strip() if is_scalar(impl) else None)
-                    node_name = mapping_get(aval, "node")
-                    if not is_scalar(node_name):
-                        continue
-                    slots = {}
-                    for skey, sval in mapping_items(mapping_get(aval, "pluginslots")):
-                        if is_scalar(skey) and is_mapping(sval):
-                            base = mapping_get(sval, "base")
-                            multiple = mapping_get(sval, "multiple")
-                            slots[skey.value] = {
-                                "base": base.value.strip() if is_scalar(base) else None,
-                                "multiple": is_scalar(multiple) and multiple.value == "true",
-                            }
-                    model["hosts"]["%s.%s" % (pkg_key.value, node_name.value)] = slots
-    _local_plugin_model_cache[key] = model
-    return model
-
-
 def load_local_system(base_dir, ref):
     """A `subSystems:` reference resolved against a .rossystem sitting NEXT TO the file being
     linted, in the same record shape load_system_index() returns (plus "local": True).
 
     Consulted only when the vendored catalogue has never heard of the name -- i.e. an ordinary
-    project-local system. Without it, every connections: endpoint such a subsystem provides
-    raises RM050 ("not a declared interface of system X"), which is this plugin's blind spot and
-    not a defect in the model: the real validator's scoping walks the Xtext resource set, not
-    assets/node_index.json. RM091 still fires, because "resolved by sitting next to you" is
-    weaker evidence than "catalogued", and the author should know which one they got.
+    project-local system -- so the reuse checks (RM090-RM092) and RM065 see what it provides.
+    RM091 still fires, because "resolved by sitting next to you" is weaker evidence than
+    "catalogued", and the author should know which one they got.
 
     The walk itself is build_node_index.extract_rossystem_system, so the code that BUILT the
     catalogue and the code that reads a local file cannot disagree about what a subsystem
@@ -639,9 +602,9 @@ def load_local_system(base_dir, ref):
             if root is None:
                 break
             # 4-tuple since connections were added to the index. The `except` below is broad
-            # enough to swallow a TypeError from getting this wrong, and did: every RM050 on a
-            # project-local subsystem came back, silently, because a resolution failure and a
-            # crash are indistinguishable to the caller.
+            # enough to swallow a TypeError from getting this wrong, and did: every project-local
+            # subsystem silently stopped resolving, because a resolution failure and a crash are
+            # indistinguishable to the caller.
             _name, nodes, nested, conns = bni.extract_rossystem_system(root)
         except Exception:
             break
@@ -713,33 +676,10 @@ ROS2_PLUGIN_BLOCKS = [
     "parameters",
 ]
 
-# Ros.xtext:175 PluginSlotValueFormat enum
-VALID_PLUGINSLOT_FORMATS = ("class", "library")
-
-# Ros.xtext:227-244 PluginSlot members. The block form takes them in any order; the inline
-# { ... } form takes them in exactly this order.
-PLUGINSLOT_KEYS = ["base", "parameter", "format", "multiple", "default"]
-
-# Ros2.xtext:34-41 PluginBase members, all three required, any order.
-PLUGINBASE_KEYS = ["class", "header", "loader"]
-
-# The one loader core knows itself; any other id must be registered by an enabled language
-# plugin (RosValidator.checkPluginBaseLoader), which a linter cannot see.
-PLUGINLIB = "pluginlib"
-
-# Basics.xtext:410 QualifiedRef: <package>.<Name> (or more segments), quoted or not.
-RE_QUALIFIED_REF = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)+$")
-
-# Ros2.xtext:69-74 LifecycleState enum
-LIFECYCLE_STATES = ("Unconfigured", "Inactive", "Active", "Finalized")
 
 # Ros2.xtext AmentPackage members (rule 21): fromGitRepo first, dependencies last, and
 # pluginbases / artifacts in either order between them (an unordered group, Ros2.xtext:18-27).
 AMENT_PACKAGE_KEYS = ["fromGitRepo", "pluginbases", "artifacts", "dependencies"]
-AMENT_PACKAGE_RANK = {"fromGitRepo": 0, "pluginbases": 1, "artifacts": 1, "dependencies": 2}
-
-# grammar-subset.md sec 5.2: present in the token file but UNREACHABLE from AmentPackage.
-ROS2_FORBIDDEN_SPEC_BLOCKS = ["msgs", "srvs", "actions"]
 
 # Added to the grammar by commit 3d9e5ebd (2025-10-16). These were EXCLUDED while our oracle was
 # the 2024-08-01 JAR, which predates them and cannot lex them. That pin was lifted 2026-07-21 when
@@ -800,9 +740,6 @@ ARROW_FROM_TO = {"pub": "sub", "ss": "sc", "as": "ac"}
 ARROW_ALL = ["pub", "sub", "ss", "sc", "as", "ac"]
 ARROW_KIND_ORDER = ["pub", "sub", "ss", "sc", "as", "ac"]
 
-INT32_MIN = -2147483648
-INT32_MAX = 2147483647
-
 # Tab stop used only to recover structure from tab-indented files (see Linter.compose).
 TAB_STOP = 8
 
@@ -823,7 +760,6 @@ ROS_SPEC_BODIES = {
     "srvs": ["request", "response"],
     "actions": ["goal", "result", "feedback"],
 }
-ROS_ALL_BODIES = {b for bs in ROS_SPEC_BODIES.values() for b in bs}
 
 # Basics.xtext:210-213 AbstractType -- the scalar alternatives, verbatim and complete.
 ROS_SCALAR_TYPES = [
@@ -837,23 +773,10 @@ ROS_ARRAY_TYPES = [
     "bool[]", "int8[]", "uint8[]", "int16[]", "uint16[]", "int32[]", "uint32[]",
     "int64[]", "uint64[]", "float32[]", "float64[]", "string[]", "byte[]", "char[]",
 ]
-ROS_PRIMITIVE_TYPES = set(ROS_SCALAR_TYPES) | set(ROS_ARRAY_TYPES)
-
-# Basics.xtext:377 -- KEYWORD, a legal Data (field name) alternative.
-ROS_FIELD_NAME_KEYWORDS = {
-    "goal", "message", "result", "feedback", "name", "value", "service", "type",
-    "action", "duration", "time",
-}
 
 # Basics.xtext:206-208  terminal MESSAGE_ASIGMENT: ((ID|STRING)'='(ID|STRING|INT|'-'INT));
 # One token, so no whitespace may surround the '='.
 _MA_ATOM = r"""(?:[A-Za-z_][A-Za-z_0-9]*|"[^"]*"|'[^']*')"""
-RE_MESSAGE_ASIGMENT = re.compile(
-    r"^" + _MA_ATOM + r"=(?:" + _MA_ATOM + r"|-?[0-9]+)$"
-)
-
-# A fixed- or bounded-size array: the grammar hard-codes the literal '[]' only.
-RE_BOUNDED_ARRAY = re.compile(r"^(.*)\[\s*[0-9]+\s*\]$|^(.*)<=[0-9]+$")
 
 # Characters that force quoting because Xtext ID admits none of them.
 RE_NEEDS_QUOTING = re.compile(r"[./:\-\s]|^$")
@@ -1070,8 +993,7 @@ def normalise_bare_subsystems(text):
 
     `components+=SubSystem*` (RosSystem.xtext) is a repetition, not a list production: each
     entry is one bare (optionally quoted) EString on its own indented line, and the real
-    grammar accepts nothing else. Settled 2026-08-14 against the 3.1.0 language server, the
-    experiment RM093's own hint asked for:
+    grammar accepts nothing else. Settled 2026-08-14 against the 3.1.0 language server:
 
         subSystems:          subSystems:
           "turtlebot"          - "turtlebot"
@@ -1088,9 +1010,9 @@ def normalise_bare_subsystems(text):
     diagnostic still points at the author's own line. Nothing on disk changes and the
     emitter still writes the bare form, because that is what the grammar takes.
 
-    Returns (text, synthesised_lines): the 1-based line numbers this function rewrote.
-    check_subsystems needs them to tell OUR dashes (a legal source file) from the author's
-    own (RM093 -- a real syntax error the oracle rejects).
+    Returns (text, synthesised_lines): the 1-based line numbers this function rewrote, which
+    tell OUR dashes (a legal source file) from the author's own (a syntax error the language
+    server reports).
     """
     lines = text.splitlines(True)
     out = list(lines)
@@ -1127,7 +1049,7 @@ def normalise_bare_subsystems(text):
                 break
             if body[0] in "-[{&*?|>%@`":
                 # A '- item' sequence or a bracket list: composable as-is, and the author's own
-                # shape is what RM093 has to see. Rewriting a dash line would nest it
+                # shape is what the language server has to see. Rewriting a dash line would nest it
                 # ('- - "x"') and silently destroy the reference.
                 entries = []
                 break
@@ -1154,7 +1076,6 @@ RE_EXTENSION_BLOCK_KEY = re.compile(
 RE_EXTENSION_LINE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<at>@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*):(?P<rest>.*)$"
 )
-EXTENSION_REF_PREFIXES = ("pub", "sub", "ss", "sc", "as", "ac", "param")
 
 
 def is_extension_block_key(name):
@@ -1307,7 +1228,6 @@ class Linter(object):
         self.lines = []
         self.root = None
         self.had_leading_tabs = False
-        self.synth_subsystem_lines = set()   # lines normalise_bare_subsystems() rewrote
         self.use_catalogue = use_catalogue
         self.needed_type_files = set()
         self.needed_node_files = set()
@@ -1566,16 +1486,6 @@ class Linter(object):
             nxt = next((l for l in self.lines[idx:] if l.strip()), None)
             if nxt is None or nxt.lstrip().startswith("#"):
                 continue                      # trailing block: RM087 territory, not this
-            if indent_of(nxt) > 0:
-                self.error(idx, "RM094",
-                           "Comment at column 0 inside an indented block.",
-                           "Indent it to the block it annotates, or move the text to the end of "
-                           "the previous line. A line at column 0 makes "
-                           "AbstractIndentationTokenSource close every open block, and the "
-                           "server then reports 'missing EOF' -- the model ends at this comment "
-                           "and the %d line(s) after it are never read. Verified 2026-08-14: "
-                           "indented, the same file is ACCEPTED with 0 errors."
-                           % (len(self.lines) - idx))
 
         # How much of the extractor's work is still outstanding.
         #
@@ -1651,7 +1561,7 @@ class Linter(object):
 
         # The one multi-entry `subSystems:` form the grammar accepts is not composable YAML;
         # see normalise_bare_subsystems. Line-for-line, so the marks below stay the author's.
-        source, self.synth_subsystem_lines = normalise_bare_subsystems(source)
+        source, _ = normalise_bare_subsystems(source)
         source = normalise_connections(source)
         source = normalise_extension_blocks(source)
 
@@ -1713,20 +1623,9 @@ class Linter(object):
         line = node_line(node)
 
         if is_quoted(node):
-            self.error(line, "RM021",
-                       "%s '%s' is quoted." % (what, name),
-                       "RosNames (Basics.xtext:394) is ROS_CONVENTION_A | ID | 'node' and has no "
-                       "STRING alternative, so quoting it is a parse error. Emit it bare "
-                       "(emission-profile rule 7).")
             return
 
-        if not is_ros_names(name):
-            self.error(line, "RM016",
-                       "%s '%s' is not expressible as RosNames." % (what, name),
-                       "RosNames admits only ID ([A-Za-z_][A-Za-z_0-9]*) or ROS_CONVENTION_A "
-                       "(('/'ID)|(ID'/'))*. Characters such as '.', '-' or an embedded '/' "
-                       "cannot appear here and cannot be rescued by quoting (rule 7).")
-        elif "/" in name:
+        if is_ros_names(name) and "/" in name:
             self.warn(line, "RM014",
                        "%s '%s' contains '/'." % (what, name),
                        "Grammatically legal via ROS_CONVENTION_A, but rossdl's launch generation "
@@ -1748,21 +1647,17 @@ class Linter(object):
                        "defect that also breaks alphabetical ordering and cross-referencing.")
             return
 
-        if not is_quoted(node):
-            if RE_NEEDS_QUOTING.search(name) or not RE_ID.match(name):
-                self.error(line, "RM020",
-                           "%s '%s' contains a character illegal in an Xtext ID but is not "
-                           "quoted." % (what, name),
-                           "EString is STRING | ID (Basics.xtext:391); ID admits no '.', '/', "
-                           "':' or '-'. Quote it (emission-profile rule 10).")
-            elif require_quotes:
-                self.warn(line, "RM022",
-                          "%s '%s' is unquoted." % (what, name),
-                          "Quote every interface and parameter name unconditionally "
-                          "(emission-profile rule 11), even where a bare ID would parse.")
+        # A value that needs quotes and lacks them does not parse; the language server says so.
+        bare_id = RE_ID.match(name) and not RE_NEEDS_QUOTING.search(name)
+        if not is_quoted(node) and require_quotes and bare_id:
+            self.warn(line, "RM022",
+                      "%s '%s' is unquoted." % (what, name),
+                      "Quote every interface and parameter name unconditionally "
+                      "(emission-profile rule 11), even where a bare ID would parse.")
 
     def check_name_conventions(self, node, what, rule, severity):
-        """Mirrors checkNameConventionsNode / Artifact / Package (R1/R2/R3)."""
+        """Uppercase in a .rossystem node label (RM067). House style only: package, artifact,
+        node and parameter names are checked by the validator itself (checkNameConventions*)."""
         if not is_scalar(node):
             return
         name = node.value
@@ -1772,39 +1667,12 @@ class Linter(object):
         chars = ", ".join("'%s' at index %d" % (name[i], i) for i in positions)
         message = ("%s '%s' contains %d uppercase character(s): %s."
                    % (what, name, len(positions), chars))
-        if severity == ERROR:
-            hint = ("checkNameConventionsPackage raises error(): 'Capital letters are not "
-                    "allowed'. Package names MUST be [a-z0-9_] only (emission-profile rule 8). "
-                    "Note the validator loop does not short-circuit, so the real toolchain emits "
-                    "one marker per uppercase character.")
-        elif severity == INFO:
-            hint = ("House style only -- NO validator checks this. A rossystem::RosNode label is a "
-                    "different metaclass from the ros::Node that checkNameConventionsNode targets, "
-                    "and RosSystemValidator.xtend declares no name-convention @Check. Lowercase "
-                    "when authoring fresh; never mangle a transcribed name to silence this "
-                    "(emission-profile rule 9).")
-        else:
-            hint = ("The validator raises warning(): 'Capital letters are not recommended'. "
-                    "Lowercase where the upstream source permits, but do not mangle a real name "
-                    "such as gazebo_sensor_B1_controller (emission-profile rule 9).")
+        hint = ("House style only -- NO validator checks this. A rossystem::RosNode label is a "
+                "different metaclass from the ros::Node that checkNameConventionsNode targets, "
+                "and RosSystemValidator.xtend declares no name-convention @Check. Lowercase "
+                "when authoring fresh; never mangle a transcribed name to silence this "
+                "(emission-profile rule 9).")
         self.add(node_line(node), severity, rule, message, hint)
-
-    def check_parameter_name_conventions(self, node):
-        """Mirrors checkNameConventionsParameters (R4): the dot-suffix carve-out."""
-        if not is_scalar(node):
-            return
-        name = node.value
-        offenders = [i for i, ch in enumerate(name)
-                     if ch.isupper() and "." not in name[i:]]
-        if offenders:
-            chars = ", ".join("'%s' at index %d" % (name[i], i) for i in offenders)
-            self.warn(node_line(node), "RM013",
-                      "Parameter name '%s' has uppercase in its final dot-segment: %s."
-                      % (name, chars),
-                      "checkNameConventionsParameters forgives an uppercase character at index i "
-                      "only if name[i:] still contains a '.'. So 'Foo.bar' is clean, 'foo.Bar' "
-                      "warns. Severity is WARNING despite the validator's 'has to follow' wording "
-                      "-- trust the warning() call, not the prose.")
 
     def check_ordering(self, keys_present, canonical, line, rule, what, hint):
         ordered = [k for k in keys_present if k in canonical]
@@ -1846,29 +1714,13 @@ class Linter(object):
     def check_ros(self):
         nodes = parse_ros_indent(self.lines)
         if not nodes:
-            self.error(0, "RM070", "File declares no package.",
-                       "A .ros file is a PackageSet (Ros.xtext:11-14): one or more "
-                       "'<package_name>:' declarations at column 0, each with an indented body.")
             return
 
         # The RosTooling-NadiaHG fork serialises .ros in a BRACE syntax --
         # `PackageSet{ Package geometry_msgs{ Specs { TopicSpec Accel{ message { ... }}}}` --
         # which the indentation grammar in this repo's RosTooling clone cannot parse at all.
         # Say so once instead of emitting a wall of RM071s about the braces.
-        if "{" in nodes[0]["text"] and not nodes[0]["text"].endswith(":"):
-            self.error(nodes[0]["line"], "RM079",
-                       "File uses the brace serialisation, not the indentation syntax.",
-                       "Lines such as 'PackageSet{ Package std_msgs{ spec{' belong to the "
-                       "RosTooling-NadiaHG fork's concrete syntax. The grammar this linter "
-                       "mirrors (RosTooling HEAD, Ros.xtext:11-46) is indentation-based and "
-                       "cannot parse it. Findings below are unreliable for this file. Which "
-                       "fork is canonical is STATUS.md open question N2.")
 
-        if nodes[0]["indent"] != 0:
-            self.error(nodes[0]["line"], "RM070",
-                       "First declaration is indented; a .ros file must open at column 0.",
-                       "PackageSet holds Package_Impl entries whose name sits at column 0 "
-                       "(Ros.xtext:11-14).")
 
         # Group into top-level packages. Unlike .ros2, SEVERAL are legal here --
         # package+=Package_Impl* -- and tests/oracle/cases/_deps/common_msgs.ros declares nine.
@@ -1897,10 +1749,6 @@ class Linter(object):
     def check_ros_package_head(self, head):
         text = head["text"]
         if not text.endswith(":"):
-            self.error(head["line"], "RM070",
-                       "Package declaration '%s' has no trailing ':'." % text,
-                       "Package_Impl is name=RosNames':' (Ros.xtext:25-27). Without the colon "
-                       "the line lexes as a spec name in a position that admits none.")
             return None
         name = text[:-1].strip()
         if not name:
@@ -1908,37 +1756,12 @@ class Linter(object):
                        "Never emit an empty name (emission-profile rule 20).")
             return None
         if name[0] in "\"'":
-            self.error(head["line"], "RM021",
-                       "Package name %s is quoted." % name,
-                       "RosNames (Basics.xtext:394) has no STRING alternative, so quoting a "
-                       "package name is a parse error (emission-profile rule 7).")
             name = name.strip("\"'")
-        elif not is_ros_names(name):
-            self.error(head["line"], "RM016",
-                       "Package name '%s' is not expressible as RosNames." % name,
-                       "RosNames admits only ID ([A-Za-z_][A-Za-z_0-9]*) or ROS_CONVENTION_A; "
-                       "'.', '-' and ':' cannot appear and cannot be rescued by quoting.")
-        positions = uppercase_positions(name)
-        if positions:
-            chars = ", ".join("'%s' at index %d" % (name[i], i) for i in positions)
-            self.error(head["line"], "RM010",
-                       "Package name '%s' contains %d uppercase character(s): %s."
-                       % (name, len(positions), chars),
-                       "checkNameConventionsPackage raises error(): 'Capital letters are not "
-                       "allowed' (RosValidator.xtend:44-48). It is the same @Check that fires "
-                       "on a .ros2 package name, confirmed at ERROR severity by the oracle. "
-                       "The loop does not short-circuit, so the toolchain emits one marker per "
-                       "uppercase character.")
         return name
 
     def check_ros_package_body(self, head, body):
         pkg_name = head["text"].rstrip(":")
         if not body:
-            self.warn(head["line"], "RM071",
-                      "Package '%s' has an empty body." % pkg_name,
-                      "Every member of Package_Impl is optional, so this parses -- but a "
-                      "package declaring no msgs:, srvs: or actions: defines nothing, and no "
-                      "'type:' reference can ever resolve into it.")
             return
 
         base = min(n["depth"] for n in body)
@@ -1949,33 +1772,16 @@ class Linter(object):
             text = node["text"]
             key = text.split(":", 1)[0].strip()
             if not text.endswith(":") and ":" not in text:
-                self.error(node["line"], "RM071",
-                           "Unknown member '%s' at package level." % text,
-                           "Package_Impl admits only fromGitRepo:, dependencies:, msgs:, "
-                           "srvs:, actions: (Ros.xtext:25-46). A bare word here is most often "
-                           "a spec name that is missing its enclosing 'msgs:' block.")
                 continue
             if key in ROS_SPEC_BLOCKS:
                 blocks_present.append(key)
                 self.check_ros_specs(key, node, body)
-            elif key == "fromGitRepo":
-                value = text.split(":", 1)[1].strip()
-                if value and value[0] not in "\"'":
-                    self.error(node["line"], "RM020",
-                               "fromGitRepo value %s is not quoted." % value,
-                               "It is an EString containing '/' and ':'; quote it with double "
-                               "quotes (emission-profile rule 14).")
             elif key == "dependencies":
                 self.warn(node["line"], "RM044",
                           "'dependencies:' has zero corpus support.",
                           "It is an inline bracketed list nested inside an indented block -- a "
                           "shape the corpus never exercises against the indentation lexer "
                           "(emission-profile sec 3). Avoid.")
-            else:
-                self.error(node["line"], "RM071",
-                           "Unknown member '%s:' at package level." % key,
-                           "Package_Impl admits only fromGitRepo:, dependencies:, msgs:, "
-                           "srvs:, actions: (Ros.xtext:25-46).")
 
         for b in ROS_SPEC_BLOCKS:
             if blocks_present.count(b) > 1:
@@ -1998,10 +1804,6 @@ class Linter(object):
             inner.append(node)
 
         if not inner:
-            self.warn(block_node["line"], "RM071",
-                      "Block '%s:' is empty." % block,
-                      "An empty block parses (spec+=TopicSpec* permits zero) but declares "
-                      "nothing. Drop it or fill it.")
             return
 
         spec_depth = min(n["depth"] for n in inner)
@@ -2012,18 +1814,8 @@ class Linter(object):
                 continue
             name = node["text"]
             if name.endswith(":"):
-                self.error(node["line"], "RM073",
-                           "Spec name '%s' has a trailing ':'." % name,
-                           "TopicSpec/ServiceSpec/ActionSpec are "
-                           "name=(EString|'Header'|'String') with NO ':' (Ros.xtext:81-104). "
-                           "The spec name is the one named element in this language that "
-                           "carries no colon; its BEGIN is synthesised from the indent alone.")
                 name = name.rstrip(":")
             if " " in name.strip():
-                self.error(node["line"], "RM073",
-                           "Spec name line '%s' holds more than one token." % node["text"],
-                           "A spec name is a single EString (Ros.xtext:81-104). Field lines "
-                           "belong one level further in, under the body keyword.")
                 continue
             bare = name.strip("\"'")
             if not bare:
@@ -2058,43 +1850,14 @@ class Linter(object):
         legal = ROS_SPEC_BODIES[block]
 
         if not own:
-            self.error(spec_node["line"], "RM073",
-                       "Spec '%s' has no body keyword." % spec_node["text"],
-                       "Ros.xtext:81-104 makes the keyword mandatory: a TopicSpec needs "
-                       "'message', a ServiceSpec needs 'request' and 'response', an ActionSpec "
-                       "needs 'goal', 'result' and 'feedback'. Only the indented field block "
-                       "after each keyword is optional.")
             return
 
         body_depth = min(n["depth"] for n in own)
-        found = []
         for pos, node in enumerate(own):
             if node["depth"] != body_depth:
                 continue
-            kw = node["text"].strip()
-            if kw not in legal:
-                if kw in ROS_ALL_BODIES:
-                    self.error(node["line"], "RM073",
-                               "Body keyword '%s' is not legal under '%s:'." % (kw, block),
-                               "'%s:' specs admit only %s (Ros.xtext:81-104); '%s' belongs to "
-                               "a different spec kind." % (block, " / ".join(legal), kw))
-                else:
-                    self.error(node["line"], "RM073",
-                               "'%s' is not a body keyword." % kw,
-                               "Expected one of %s at this level. If it was meant as a field "
-                               "it is indented one level too little; if it was meant as a spec "
-                               "name, one level too much." % " / ".join(legal))
-                continue
-            found.append(kw)
-            self.check_ros_fields(node, own[pos + 1:])
-
-        for kw in legal:
-            if kw not in found:
-                self.error(spec_node["line"], "RM073",
-                           "Spec '%s' has no '%s' section." % (spec_node["text"], kw),
-                           "Ros.xtext:81-104 makes the keyword itself mandatory -- only its "
-                           "indented body is optional. Emit a bare '%s' line when the section "
-                           "has no fields." % kw)
+            if node["text"].strip() in legal:
+                self.check_ros_fields(node, own[pos + 1:])
 
     def check_ros_fields(self, body_node, rest):
         depth = body_node["depth"]
@@ -2132,110 +1895,18 @@ class Linter(object):
                       "(emission-profile rule 2 readability); do not rewrite a source file "
                       "that does this.")
 
-        if len(toks) % 2 != 0:
-            self.error(line, "RM077",
-                       "Field line '%s' has an odd number of tokens (%d)."
-                       % (node["text"], len(toks)),
-                       "Every MessagePart is exactly two tokens, a Type then a Data "
-                       "(Basics.xtext:201-204). An odd count means a type with no name -- or a "
-                       "constant written with spaces around '=': 'uint8 FAN_OFF = 0' lexes as "
-                       "three tokens, MESSAGE_ASIGMENT requires 'uint8 FAN_OFF=0'.")
 
         for i in range(0, len(toks) - 1, 2):
             self.check_ros_field_type(toks[i], line)
-            self.check_ros_field_name(toks[i + 1], line)
 
     def check_ros_field_type(self, tok, line):
-        if tok in ROS_PRIMITIVE_TYPES:
-            return
-
-        if "=" in tok and not RE_MESSAGE_ASIGMENT.match(tok):
-            # 'uint8 FAN_OFF = 0' tokenises to four tokens, so the pair walker lands on '=' in
-            # a Type position. Say what is actually wrong rather than "unknown type '='".
-            self.error(line, "RM077",
-                       "Stray '=' in a field line (token '%s')." % tok,
-                       "MESSAGE_ASIGMENT is a single terminal "
-                       "((ID|STRING)'='(ID|STRING|INT|'-'INT), Basics.xtext:206-208), so a "
-                       "constant may carry NO whitespace around its '='. Write "
-                       "'uint8 FAN_OFF=0', not 'uint8 FAN_OFF = 0'. The oracle rejects the "
-                       "spaced form with \"mismatched input '=' expecting RULE_END\".")
-            return
-
-        if RE_BOUNDED_ARRAY.match(tok):
-            stem = tok.split("[")[0].split("<=")[0]
-            self.error(line, "RM075",
-                       "Fixed- or bounded-size array '%s'." % tok,
-                       "The grammar hard-codes the literal '[]' (the fourteen *Array rules at "
-                       "Basics.xtext:296-362, and ArraySpecRef at 373-375); ROS IDL's "
-                       "'float32[3]' and 'string<=10' have no production at all. Verified "
-                       "against the oracle, which reports 'Invalid token %s[' -- a LEXER "
-                       "error, so the whole file fails to parse. Emit the unbounded form and "
-                       "tell the caller the bound was dropped." % stem)
-            return
-
-        if tok.endswith("[]") and tok[:-2] in ("time", "duration", "Header"):
-            self.error(line, "RM074",
-                       "'%s' has no array form." % tok,
-                       "AbstractType (Basics.xtext:212) lists exactly fourteen *Array rules, "
-                       "and timeArray / durationArray / HeaderArray are not among them. Only "
-                       "these may take '[]': %s."
-                       % ", ".join(t[:-2] for t in ROS_ARRAY_TYPES))
-            return
-
+        """A quoted '<pkg>/(msg|srv|action)/<Type>' field type is looked up in the type catalogue.
+        Whether a type token is legal at all is the language server's to say."""
         base = tok[:-2] if tok.endswith("[]") else tok
-        quoted = len(base) >= 2 and base[0] == base[-1] and base[0] in "\"'"
-
-        if quoted:
-            # SpecBaseRef = [TopicSpec|EString]. RosQNP.xtend gives every spec the qualified
-            # name '<pkg>/msg/<Name>' (or /srv/, /action/), so nothing else can ever link.
+        if len(base) >= 2 and base[0] == base[-1] and base[0] in "\"'":
             inner = base[1:-1]
-            if not re.match(
-                    r"^[A-Za-z_][A-Za-z_0-9]*/(msg|srv|action)/[A-Za-z_][A-Za-z_0-9]*$", inner):
-                self.warn(line, "RM076",
-                          "Spec reference '%s' is not '<package>/msg/<Type>'." % inner,
-                          "RosQNP.xtend names every TopicSpec pkg_name + '/msg/' + spec_name "
-                          "(and '/srv/', '/action/'), so only that shape resolves. Severity is "
-                          "WARNING here because linking is cross-file and this linter sees one "
-                          "file at a time -- but the oracle reports the failure as an ERROR "
-                          "('Couldn't resolve reference to TopicSpec'), so treat it as one.")
-            else:
+            if re.match(r"^[A-Za-z_][A-Za-z_0-9]*/(msg|srv|action)/[A-Za-z_][A-Za-z_0-9]*$", inner):
                 self.check_type_catalogue(inner, line)
-            return
-
-        if RE_MESSAGE_ASIGMENT.match(tok):
-            self.error(line, "RM077",
-                       "Constant '%s' appears in a Type position." % tok,
-                       "MESSAGE_ASIGMENT is the Data half of a MessagePart, never the Type "
-                       "half (Basics.xtext:201-208). Write '<type> <NAME>=<value>', for "
-                       "example 'uint8 FAN_OFF=0'.")
-            return
-
-        # An unquoted, non-primitive token. It PARSES (EString admits a bare ID) but can never
-        # LINK: every spec's qualified name contains '/', which no bare Xtext ID can express.
-        # Verified -- the oracle rejects a bare same-package 'AllTypes' with
-        # "Couldn't resolve reference to TopicSpec 'AllTypes'".
-        self.error(line, "RM074",
-                   "Unknown type '%s'." % tok,
-                   "It is neither a primitive nor a quoted spec reference. A bare name can "
-                   "NEVER resolve to a spec: RosQNP.xtend qualifies every spec as "
-                   "'<pkg>/msg/<Name>', which contains '/' and so is not expressible as a bare "
-                   "Xtext ID. This holds even for a type defined in the SAME package -- there "
-                   "is no short form; write '\"<package>/msg/%s\"'. Legal primitives are: %s "
-                   "(plus the fourteen '[]' forms)." % (tok, ", ".join(ROS_SCALAR_TYPES)))
-
-    def check_ros_field_name(self, tok, line):
-        if tok in ROS_FIELD_NAME_KEYWORDS or RE_MESSAGE_ASIGMENT.match(tok):
-            return
-        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
-            return
-        if not RE_ID.match(tok):
-            self.error(line, "RM077",
-                       "Field name '%s' is not a legal Data token." % tok,
-                       "Data is (KEYWORD | MESSAGE_ASIGMENT | EString) "
-                       "(Basics.xtext:201-204). An unquoted name must be an Xtext ID "
-                       "([A-Za-z_][A-Za-z_0-9]*); '.', '-' and '/' need quoting. If this was "
-                       "meant as a constant, remove the spaces around '=' so it lexes as one "
-                       "MESSAGE_ASIGMENT token.")
 
     # ----------------------------------------------------------------------------------
     # Type catalogue (assets/type_index.json) -- shared by .ros field types and .ros2
@@ -2289,7 +1960,6 @@ class Linter(object):
         pkg_key, pkg_val = mapping_items(self.root)[0]
 
         self.check_ros_names_position(pkg_key, "Package name")
-        self.check_name_conventions(pkg_key, "Package name", "RM010", ERROR)
 
         if not is_mapping(pkg_val):
             if pkg_val is not None and is_scalar(pkg_val) and pkg_val.value == "":
@@ -2300,24 +1970,12 @@ class Linter(object):
             return
 
         self.check_duplicate_keys(pkg_val, "package '%s'" % pkg_key.value)
-        self.collect_local_plugin_model(pkg_key.value, pkg_val)
 
-        present = []
         for key, val in mapping_items(pkg_val):
             if not is_scalar(key):
                 continue
             name, line = key.value, node_line(key)
-            present.append(name)
-
-            if name in ROS2_FORBIDDEN_SPEC_BLOCKS:
-                self.error(line, "RM030",
-                           "'%s:' block is not reachable in a .ros2 file." % name,
-                           "Ros2.xtext makes AmentPackage the entry rule, and AmentPackage admits "
-                           "only fromGitRepo:/artifacts:/dependencies:. The token is present in "
-                           "InternalRos2Parser.tokens because Ros2 inherits Ros, but no grammar "
-                           "path reaches it (grammar-subset.md sec 5.2). Message specs belong in "
-                           "a .ros file.")
-            elif name == "artifacts":
+            if name == "artifacts":
                 self.check_ros2_artifacts(val)
             elif name == "pluginbases":
                 self.check_ros2_pluginbases(val)
@@ -2327,135 +1985,18 @@ class Linter(object):
                           "0 of 253 corpus .ros2 files use it, and it is an inline bracketed list "
                           "inside an indented block -- a shape the corpus never exercises against "
                           "the indentation lexer (emission-profile sec 3). Avoid.")
-            elif name == "fromGitRepo":
-                if is_scalar(val) and not is_quoted(val):
-                    self.error(node_line(val), "RM020",
-                               "fromGitRepo value '%s' is not quoted." % val.value,
-                               "It is an EString containing '/' and ':'; quote it with double "
-                               "quotes (emission-profile rule 14).")
-            elif name not in AMENT_PACKAGE_KEYS:
-                self.error(line, "RM037",
-                           "Unknown key '%s:' at package level." % name,
-                           "AmentPackage admits only fromGitRepo:, pluginbases:, artifacts:, "
-                           "dependencies: (Ros2.xtext:13-28).")
 
-        ranked = [k for k in present if k in AMENT_PACKAGE_RANK]
-        if ranked != sorted(ranked, key=AMENT_PACKAGE_RANK.get):
-            self.error(node_line(pkg_key), "RM039",
-                       "AmentPackage member order is %s; fromGitRepo: comes first and "
-                       "dependencies: last." % " -> ".join(ranked),
-                       "Ros2.xtext:13-28 is a sequence (pluginbases: and artifacts: may swap), "
-                       "so another order does not parse (emission-profile rule 21).")
-
-    # -- Phase 4 plugin model: bases, plugins, slots -------------------------------------
-
-    def collect_local_plugin_model(self, pkg_name, pkg_val):
-        """Bases and plugins this package declares, so references into the SAME package can be
-        resolved like the linker would: <package>.<Base> -> loader, <package>.<Plugin> -> the
-        base it implements. References into other packages are left to the validator."""
-        self.local_pkg = pkg_name
-        self.local_bases = {}
-        self.local_plugins = {}
-        bases = mapping_get(pkg_val, "pluginbases")
-        for bkey, bval in mapping_items(bases):
-            if is_scalar(bkey):
-                loader = mapping_get(bval, "loader") if is_mapping(bval) else None
-                self.local_bases[bkey.value] = loader.value if is_scalar(loader) else None
-        for _akey, aval in mapping_items(mapping_get(pkg_val, "artifacts")):
-            for pkey, pval in mapping_items(mapping_get(aval, "plugins") if is_mapping(aval) else None):
-                if is_scalar(pkey):
-                    impl = mapping_get(pval, "implements") if is_mapping(pval) else None
-                    self.local_plugins[pkey.value] = impl.value.strip() if is_scalar(impl) else None
-
-    def check_qualified_ref(self, node, what, target):
-        """A [PluginBase|QualifiedRef] or [Plugin|QualifiedRef] value: '<package>.<Name>'. Returns
-        the reference, or None when it cannot be a valid one (and says why)."""
-        if not is_scalar(node):
-            self.error(node_line(node) if node is not None else 0, "RM033",
-                       "%s must be a single '<package>.<%s>' reference." % (what, target), "")
-            return None
-        ref = node.value.strip()
-        if "::" in ref:
-            self.error(node_line(node), "RM033",
-                       "%s '%s' is a C++ class, not a reference to a %s." % (what, ref, target.lower()),
-                       "Since Phase 4 this names a declared plugin %s as <package>.<%s> "
-                       "(Basics.xtext QualifiedRef); the C++ class goes in the base's 'class:' "
-                       "under 'pluginbases:'. Otherwise: \"Couldn't resolve reference to %s\"."
-                       % (target.lower(), target, "PluginBase" if target == "Base" else "Plugin"))
-            return None
-        if not RE_QUALIFIED_REF.match(ref):
-            self.error(node_line(node), "RM033",
-                       "%s '%s' is not a '<package>.<%s>' reference." % (what, ref, target),
-                       "References to plugin bases and plugins are qualified by the declaring "
-                       "package's name (Basics.xtext QualifiedRef).")
-            return None
-        return ref
-
-    def resolvable_base_ref(self, ref):
-        """True when ref is a well-formed base reference that is not already reported as
-        unresolved in this package (so a wrong 'implements:' is reported once, not again at
-        every slot whose default names that plugin)."""
-        if not ref or not RE_QUALIFIED_REF.match(ref):
-            return False
-        name = self.local_ref_name(ref)
-        return name is None or name in getattr(self, "local_bases", {})
-
-    def local_ref_name(self, ref):
-        """'Name' when ref points into this package, else None."""
-        pkg, _, name = ref.rpartition(".")
-        return name if pkg == getattr(self, "local_pkg", None) else None
 
     def check_ros2_pluginbases(self, node):
         if not is_mapping(node):
-            self.error(node_line(node) if node is not None else 0, "RM036",
-                       "'pluginbases:' must be a mapping of <Base>: { class, header, loader }.", "")
             return
         self.check_duplicate_keys(node, "'pluginbases:' block")
         for bkey, bval in mapping_items(node):
             if not is_scalar(bkey):
                 continue
             if not is_mapping(bval):
-                self.error(node_line(bkey), "RM036",
-                           "Plugin base '%s' body must be a mapping." % bkey.value,
-                           "Ros2.xtext:34-41 -- declare 'class:', 'header:' and 'loader:'.")
                 continue
             self.check_duplicate_keys(bval, "plugin base '%s'" % bkey.value)
-            for k, _ in mapping_items(bval):
-                if is_scalar(k) and k.value not in PLUGINBASE_KEYS:
-                    self.error(node_line(k), "RM036",
-                               "Unknown key '%s:' in plugin base '%s'." % (k.value, bkey.value),
-                               "A PluginBase admits only: %s." % ", ".join(PLUGINBASE_KEYS))
-            for req in PLUGINBASE_KEYS:
-                if mapping_get(bval, req) is None:
-                    self.error(node_line(bkey), "RM038",
-                               "Plugin base '%s' is missing '%s:'." % (bkey.value, req),
-                               "Ros2.xtext:34-41 -- class:, header: and loader: are all required.")
-            cls = mapping_get(bval, "class")
-            if is_scalar(cls):
-                cval = cls.value.strip()
-                if "::" not in cval or cval.startswith("::") or cval.endswith("::"):
-                    self.error(node_line(cls), "RM033",
-                               "Plugin base '%s' field 'class' must be a C++ namespace-qualified "
-                               "class (e.g. 'nav2_core::GlobalPlanner')." % bkey.value,
-                               "RosValidator.checkPluginBase.")
-                elif not is_quoted(cls):
-                    self.error(node_line(cls), "RM020",
-                               "Plugin base '%s' class '%s' is not quoted." % (bkey.value, cval),
-                               "':' cannot appear in an Xtext ID; quote the class.")
-            header = mapping_get(bval, "header")
-            if is_scalar(header) and not is_quoted(header) and not RE_ID.match(header.value):
-                self.error(node_line(header), "RM020",
-                           "Plugin base '%s' header '%s' is not quoted." % (bkey.value, header.value),
-                           "'/' and '.' cannot appear in an Xtext ID; quote the header path.")
-            loader = mapping_get(bval, "loader")
-            if is_scalar(loader) and loader.value.strip() != PLUGINLIB:
-                self.warn(node_line(loader), "RM047",
-                          "Plugin base '%s' uses loader '%s'." % (bkey.value, loader.value.strip()),
-                          "Only 'pluginlib' is built in. Any other loader must be registered by "
-                          "exactly one enabled language plugin (for example 'bt' by the BT "
-                          "plugin); otherwise the validator rejects it with \"uses loader ..., "
-                          "which no enabled plugin registers\" (RosValidator.checkPluginBaseLoader). "
-                          "This linter cannot see which plugins are enabled.")
 
     def check_ros2_artifacts(self, node):
         if not is_mapping(node):
@@ -2465,7 +2006,6 @@ class Linter(object):
             if not is_scalar(art_key):
                 continue
             self.check_ros_names_position(art_key, "Artifact name")
-            self.check_name_conventions(art_key, "Artifact name", "RM011", WARNING)
             if is_mapping(art_val):
                 self.check_ros2_artifact_body(art_key, art_val)
 
@@ -2474,89 +2014,34 @@ class Linter(object):
 
         keys = mapping_keys(node)
         if "plugins" in keys:
-            if "node" in keys:
-                self.error(node_line(mapping_get_pair(node, "plugins")[0]), "RM038",
-                           "Artifact '%s' declares both 'node:' and 'plugins:'." % art_key.value,
-                           "An artifact holds a node or plugins, never both (Ros.xtext Artifact). "
-                           "Put the plugins in an artifact of their own; it is built as a shared "
-                           "library.")
-                return
-            for key, val in mapping_items(node):
-                if not is_scalar(key) or key.value == "plugins":
-                    continue
-                self.error(node_line(key), "RM036",
-                           "Artifact '%s' holds plugins, so '%s:' cannot appear in it."
-                           % (art_key.value, key.value),
-                           "An artifact with 'plugins:' contains nothing else (Ros.xtext Artifact); "
-                           "put interfaces, parameters and @ blocks on each plugin.")
+            # An artifact holds a node or plugins (Ros.xtext Artifact); anything else in it is
+            # the language server's to report.
             plugins = mapping_get(node, "plugins")
-            if is_mapping(plugins):
+            if "node" not in keys and is_mapping(plugins):
                 self.check_duplicate_keys(plugins, "'plugins:' block")
                 for pkey, pval in mapping_items(plugins):
                     if is_scalar(pkey):
                         self.check_ros2_plugin(pkey, pval)
-            else:
-                self.error(node_line(mapping_get_pair(node, "plugins")[0]), "RM036",
-                           "Block 'plugins:' inside artifact '%s' must be a mapping." % art_key.value,
-                           "Each plugin entry maps <PluginName>: { implements: <package>.<Base>, ... }.")
             return
 
-        is_lifecycle = False
         lifecycle_node = mapping_get(node, "lifecycle")
-        if lifecycle_node is not None:
-            if not is_scalar(lifecycle_node) or lifecycle_node.value.lower() not in ("true", "false"):
-                self.error(node_line(lifecycle_node), "RM033",
-                           "lifecycle value '%s' is not a boolean."
-                           % getattr(lifecycle_node, "value", lifecycle_node),
-                           "lifecycle admits only 'true' or 'false' (Ros2.xtext:33).")
-            elif is_quoted(lifecycle_node):
-                self.error(node_line(lifecycle_node), "RM033",
-                           "lifecycle value '%s' is quoted." % lifecycle_node.value,
-                           "lifecycle takes boolean0 (true/false bare keyword), not a quoted string.")
-            elif lifecycle_node.value.lower() == "true":
-                is_lifecycle = True
+        is_lifecycle = (is_scalar(lifecycle_node) and not is_quoted(lifecycle_node)
+                        and lifecycle_node.value.lower() == "true")
 
         blocks_present = []
-        slot_params_seen = {}
-        declared_param_names = set()
-        params_node = mapping_get(node, "parameters")
-        if is_mapping(params_node):
-            for pk, _ in mapping_items(params_node):
-                if is_scalar(pk):
-                    declared_param_names.add(pk.value)
-
         for key, val in mapping_items(node):
             if not is_scalar(key):
                 continue
             name, line = key.value, node_line(key)
 
-            if name in ("node", "lifecycle"):
-                if name == "node":
-                    self.check_ros_names_position(val, "Node name")
-                    self.check_name_conventions(val, "Node name", "RM012", WARNING)
+            if name == "node":
+                self.check_ros_names_position(val, "Node name")
                 continue
-
-            if name in ROS2_FORBIDDEN_SPEC_BLOCKS:
-                self.error(line, "RM030",
-                           "'%s:' block is not reachable in a .ros2 file." % name,
-                           "See grammar-subset.md sec 5.2. Message specs belong in a .ros file.")
-                continue
-
             if is_extension_block_key(name):
-                if "node" not in mapping_keys(node):
-                    self.error(line, "RM036",
-                               "Extension block '%s:' inside artifact '%s' requires a 'node:' declaration."
-                               % (name, art_key.value),
-                               "Extension blocks in .ros2 attach to Node or Plugin, not node-less Artifacts.")
-                else:
+                if "node" in keys:
                     self.check_extension_block(key, val)
                 continue
-
             if name not in ROS2_NODE_BLOCKS:
-                self.error(line, "RM036",
-                           "Unknown block '%s:' inside artifact '%s'." % (name, art_key.value),
-                           "A Node admits only: %s (Ros.xtext:127-172)."
-                           % ", ".join(ROS2_NODE_BLOCKS))
                 continue
 
             blocks_present.append(name)
@@ -2570,15 +2055,10 @@ class Linter(object):
                     if name == "parameters":
                         self.check_ros2_parameter(entry_key, entry_val)
                     elif name == "pluginslots":
-                        self.check_ros2_pluginslot(entry_key, entry_val, declared_param_names,
-                                                   slot_params_seen)
+                        if is_mapping(entry_val):
+                            self.check_duplicate_keys(entry_val, "pluginslot '%s'" % entry_key.value)
                     else:
                         self.check_ros2_interface(name, entry_key, entry_val, is_lifecycle=is_lifecycle)
-
-        if "node" not in mapping_keys(node):
-            self.error(node_line(art_key), "RM038",
-                       "Artifact '%s' has neither 'node:' nor 'plugins:' declaration." % art_key.value,
-                       "Ros.xtext Artifact -- an artifact declares a 'node:' or 'plugins:'.")
 
         if blocks_present:
             self.check_ordering(blocks_present, ROS2_NODE_BLOCKS, node_line(art_key), "RM039",
@@ -2589,58 +2069,15 @@ class Linter(object):
 
     def check_ros2_plugin(self, plugin_key, val):
         if not is_mapping(val):
-            self.error(node_line(plugin_key), "RM036",
-                       "Plugin '%s' body must be a mapping." % plugin_key.value,
-                       "Ros.xtext Plugin -- 'implements: <package>.<Base>' first, then interface "
-                       "and parameter blocks.")
             return
         self.check_duplicate_keys(val, "plugin '%s'" % plugin_key.value)
-
-        keys = mapping_keys(val)
-        impl_pair = mapping_get_pair(val, "implements")
-        if impl_pair[0] is None:
-            self.error(node_line(plugin_key), "RM038",
-                       "Plugin '%s' is missing 'implements:'." % plugin_key.value,
-                       "Every plugin implements a declared plugin base: 'implements: "
-                       "<package>.<Base>' (Ros.xtext Plugin).")
-        else:
-            if keys and keys[0] != "implements":
-                self.error(node_line(impl_pair[0]), "RM039",
-                           "'implements:' must be the first member of plugin '%s'." % plugin_key.value,
-                           "Ros.xtext Plugin reads 'implements:' before any other member, so "
-                           "another order does not parse.")
-            ref = self.check_qualified_ref(impl_pair[1], "Plugin '%s' field 'implements'"
-                                           % plugin_key.value, "Base")
-            name = self.local_ref_name(ref) if ref else None
-            if name is not None and name not in getattr(self, "local_bases", {}):
-                self.error(node_line(impl_pair[1]), "RM038",
-                           "Plugin '%s' implements '%s', which package '%s' does not declare under "
-                           "'pluginbases:'." % (plugin_key.value, ref, self.local_pkg),
-                           "The validator reports \"Couldn't resolve reference to PluginBase\".")
-
         for k, v in mapping_items(val):
             if not is_scalar(k):
                 continue
-            kname, kline = k.value, node_line(k)
-            if kname == "implements":
-                continue
-            if kname == "loader":
-                self.error(kline, "RM036",
-                           "Plugin '%s' declares 'loader:'; a plugin's loader comes from its base."
-                           % plugin_key.value,
-                           "Since Phase 4 the loader is a field of the plugin base "
-                           "('pluginbases: <Base>: loader: ...'), and a plugin only names that base "
-                           "with 'implements:'.")
-                continue
+            kname = k.value
             if is_extension_block_key(kname):
                 self.check_extension_block(k, v)
-                continue
-            if kname not in ROS2_PLUGIN_BLOCKS:
-                self.error(kline, "RM036",
-                           "Unknown block '%s:' inside plugin '%s'." % (kname, plugin_key.value),
-                           "A Plugin admits only: implements, %s." % ", ".join(ROS2_PLUGIN_BLOCKS))
-                continue
-            if is_mapping(v):
+            elif kname in ROS2_PLUGIN_BLOCKS and is_mapping(v):
                 self.check_duplicate_keys(v, "'%s:' block" % kname)
                 for entry_key, entry_val in mapping_items(v):
                     if not is_scalar(entry_key):
@@ -2649,104 +2086,6 @@ class Linter(object):
                         self.check_ros2_parameter(entry_key, entry_val)
                     else:
                         self.check_ros2_interface(kname, entry_key, entry_val, is_lifecycle=False)
-
-    def check_ros2_pluginslot(self, slot_key, val, declared_param_names, slot_params_seen):
-        if not is_mapping(val):
-            self.error(node_line(slot_key), "RM036",
-                       "PluginSlot '%s' body must be a mapping." % slot_key.value,
-                       "Ros.xtext PluginSlot -- declare 'base:' and 'parameter:'.")
-            return
-        self.check_duplicate_keys(val, "pluginslot '%s'" % slot_key.value)
-        keys = []
-        for k, _ in mapping_items(val):
-            if not is_scalar(k):
-                continue
-            if k.value not in PLUGINSLOT_KEYS:
-                self.error(node_line(k), "RM036",
-                           "Unknown key '%s:' inside pluginslot '%s'." % (k.value, slot_key.value),
-                           "PluginSlot admits only: %s." % ", ".join(PLUGINSLOT_KEYS))
-            else:
-                keys.append(k.value)
-        if getattr(val, "flow_style", False) and keys != sorted(keys, key=PLUGINSLOT_KEYS.index):
-            self.error(node_line(slot_key), "RM039",
-                       "Inline pluginslot '%s' lists %s; the inline form takes %s in that order."
-                       % (slot_key.value, ", ".join(keys), ", ".join(PLUGINSLOT_KEYS)),
-                       "Ros.xtext PluginSlot -- only the indented block form takes any order.")
-
-        format_node = mapping_get(val, "format")
-        if format_node is not None:
-            fmt_val = format_node.value.strip() if is_scalar(format_node) else ""
-            if fmt_val not in VALID_PLUGINSLOT_FORMATS:
-                self.error(node_line(format_node), "RM038",
-                           "PluginSlot '%s' has invalid 'format: %s' (must be 'class' or 'library')." % (slot_key.value, fmt_val),
-                           "Ros.xtext:175 -- PluginSlotValueFormat is 'class' (default) or 'library'.")
-        multiple_node = mapping_get(val, "multiple")
-        if multiple_node is not None:
-            if not is_scalar(multiple_node) or multiple_node.value not in ("true", "false"):
-                self.error(node_line(multiple_node), "RM033",
-                           "PluginSlot '%s' field 'multiple' must be true or false."
-                           % slot_key.value, "boolean0 takes the bare keywords true / false.")
-            elif is_quoted(multiple_node):
-                self.error(node_line(multiple_node), "RM033",
-                           "PluginSlot '%s' field 'multiple' is quoted." % slot_key.value,
-                           "boolean0 takes the bare keywords true / false; a quoted value does "
-                           "not parse.")
-
-        base_ref = None
-        base_node = mapping_get(val, "base")
-        if base_node is None:
-            self.error(node_line(slot_key), "RM038",
-                       "PluginSlot '%s' is missing 'base:'." % slot_key.value,
-                       "'base: <package>.<Base>' names the plugin base the slot takes.")
-        else:
-            base_ref = self.check_qualified_ref(base_node, "PluginSlot '%s' field 'base'"
-                                                % slot_key.value, "Base")
-            name = self.local_ref_name(base_ref) if base_ref else None
-            if name is not None and name not in getattr(self, "local_bases", {}):
-                self.error(node_line(base_node), "RM038",
-                           "PluginSlot '%s' takes base '%s', which package '%s' does not declare "
-                           "under 'pluginbases:'." % (slot_key.value, base_ref, self.local_pkg),
-                           "The validator reports \"Couldn't resolve reference to PluginBase\".")
-
-        param_node = mapping_get(val, "parameter")
-        param_val = param_node.value.strip() if is_scalar(param_node) else ""
-        if not param_val:
-            self.error(node_line(param_node or slot_key), "RM038",
-                       "PluginSlot '%s' is missing 'parameter:'." % slot_key.value,
-                       "The slot declares this node parameter itself (a string, or a string list "
-                       "with 'multiple: true').")
-        elif param_val in declared_param_names:
-            self.error(node_line(param_node), "RM048",
-                       "PluginSlot '%s' declares parameter '%s', which is also listed under the "
-                       "node's parameters; remove it there, the slot declares it."
-                       % (slot_key.value, param_val),
-                       "RosValidator.checkNodePluginSlots (slot.parameterConflict).")
-        elif param_val in slot_params_seen:
-            self.error(node_line(param_node), "RM048",
-                       "PluginSlot '%s' declares parameter '%s', which slot '%s' of the same node "
-                       "already declares." % (slot_key.value, param_val, slot_params_seen[param_val]),
-                       "RosValidator.checkNodePluginSlots (slot.parameterConflict).")
-        else:
-            slot_params_seen[param_val] = slot_key.value
-
-        default_node = mapping_get(val, "default")
-        if default_node is not None:
-            default_ref = self.check_qualified_ref(default_node, "PluginSlot '%s' field 'default'"
-                                                   % slot_key.value, "Plugin")
-            name = self.local_ref_name(default_ref) if default_ref else None
-            plugins = getattr(self, "local_plugins", {})
-            if name is not None:
-                if name not in plugins:
-                    self.error(node_line(default_node), "RM038",
-                               "PluginSlot '%s' default '%s' is not a plugin of package '%s'."
-                               % (slot_key.value, default_ref, self.local_pkg),
-                               "The validator reports \"Couldn't resolve reference to Plugin\".")
-                elif (base_ref and self.resolvable_base_ref(plugins[name])
-                      and plugins[name] != base_ref):
-                    self.error(node_line(default_node), "RM048",
-                               "Default plugin '%s' implements '%s', but slot '%s' takes '%s'."
-                               % (name, plugins[name], slot_key.value, base_ref),
-                               "RosValidator.checkNodePluginSlots (slot.defaultWrongBase).")
 
     def check_placeholder_name(self, name, line):
         """An interface name still holding the extractor's {...} placeholders (a name built at
@@ -2764,58 +2103,16 @@ class Linter(object):
         if is_scalar(key):
             self.check_placeholder_name(str(key.value), node_line(key))
         if not is_mapping(val):
-            self.error(node_line(key), "RM038",
-                       "Interface '%s' has no body." % key.value,
-                       "Every interface requires at least 'type:' (Ros2.xtext:49-112).")
             return
 
         self.check_duplicate_keys(val, "interface '%s'" % key.value)
         keys = mapping_keys(val)
 
-        if "type" not in keys:
-            self.error(node_line(key), "RM038",
-                       "Interface '%s' is missing the mandatory 'type:'." % key.value,
-                       "'type:' is not optional in Publisher/Subscriber/ServiceServer/"
-                       "ServiceClient/ActionServer/ActionClient (Ros2.xtext:49-112).")
-        else:
-            type_node = mapping_get(val, "type")
-            if is_scalar(type_node):
-                if not is_quoted(type_node):
-                    self.error(node_line(type_node), "RM020",
-                               "Message type reference '%s' is not quoted." % type_node.value,
-                               "A type reference such as 'std_msgs/msg/String' contains '/', "
-                               "which an Xtext ID cannot hold (emission-profile rule 13).")
-                elif re.match(r"^[A-Za-z_][A-Za-z_0-9]*/(msg|srv|action)/[A-Za-z_][A-Za-z_0-9]*$",
-                              type_node.value):
-                    self.check_type_catalogue(type_node.value, node_line(type_node))
-
-        for extra in keys:
-            if extra not in ("type", "ns", "active_in", "qos"):
-                self.error(node_line(mapping_get_pair(val, extra)[0]), "RM036",
-                           "Unknown key '%s:' in interface '%s'." % (extra, key.value),
-                           "An interface admits only type:, ns:, active_in:, qos: in that order "
-                           "(Ros2.xtext:105-175).")
-            elif extra == "active_in":
-                act_node = mapping_get(val, "active_in")
-                if not is_lifecycle:
-                    self.error(node_line(mapping_get_pair(val, "active_in")[0]), "RM036",
-                               "'active_in:' declared on interface '%s' of non-lifecycle node." % key.value,
-                               "'active_in:' is only valid on lifecycle nodes (declared with 'lifecycle: true').")
-                elif not is_sequence(act_node):
-                    self.error(node_line(act_node if act_node else key), "RM033",
-                               "'active_in:' value must be a bracketed list of LifecycleState values.",
-                               "Allowed values: %s (Ros2.xtext:69-74)." % ", ".join(LIFECYCLE_STATES))
-                else:
-                    for item in act_node.value:
-                        if not is_scalar(item) or item.value not in LIFECYCLE_STATES:
-                            val_str = getattr(item, "value", str(item))
-                            self.error(node_line(item), "RM033",
-                                       "Lifecycle state '%s' is not permitted." % val_str,
-                                       "Allowed values: %s (Ros2.xtext:69-74)." % ", ".join(LIFECYCLE_STATES))
-                        elif is_quoted(item):
-                            self.error(node_line(item), "RM033",
-                                       "Lifecycle state '%s' is quoted." % item.value,
-                                       "These are grammar keywords, not EStrings; quoting one is a parse error.")
+        type_node = mapping_get(val, "type")
+        if (is_scalar(type_node) and is_quoted(type_node)
+                and re.match(r"^[A-Za-z_][A-Za-z_0-9]*/(msg|srv|action)/[A-Za-z_][A-Za-z_0-9]*$",
+                             type_node.value)):
+            self.check_type_catalogue(type_node.value, node_line(type_node))
 
         if "ns" in keys:
             self.warn(node_line(mapping_get_pair(val, "ns")[0]), "RM044",
@@ -2834,12 +2131,8 @@ class Linter(object):
 
     def check_ros2_parameter(self, key, val):
         self.check_estring_quoting(key, "Parameter", require_quotes=True)
-        self.check_parameter_name_conventions(key)
 
         if not is_mapping(val):
-            self.error(node_line(key), "RM038",
-                       "Parameter '%s' has no body." % key.value,
-                       "A parameter requires at least 'type:' (Ros2.xtext:114-124).")
             return
 
         self.check_duplicate_keys(val, "parameter '%s'" % key.value)
@@ -2852,14 +2145,6 @@ class Linter(object):
         # it and before ns:/value:/qos:. None of the three spec documents mention this key.
         param_keys = ["type", "default", "ns", "value", "qos"]
 
-        for extra in keys:
-            if extra not in param_keys:
-                self.error(node_line(mapping_get_pair(val, extra)[0]), "RM036",
-                           "Unknown key '%s:' in parameter '%s'." % (extra, key.value),
-                           "A Parameter admits only type:, ns:, value:, qos: "
-                           "(Ros2.xtext:114-124), plus default: from ParameterType "
-                           "(Basics.xtext:75-109).")
-
         self.check_ordering([k for k in keys if k in param_keys],
                             param_keys, node_line(key), "RM039",
                             "Parameter member",
@@ -2868,13 +2153,7 @@ class Linter(object):
                             "(emission-profile rule 23).")
 
         type_node = mapping_get(val, "type")
-        declared = None
-        if type_node is None:
-            self.error(node_line(key), "RM038",
-                       "Parameter '%s' is missing the mandatory 'type:'." % key.value,
-                       "'type:' is not optional (Ros2.xtext:114-124).")
-        elif is_scalar(type_node):
-            declared = self.check_parameter_type(type_node, key)
+        declared = self.check_parameter_type(type_node, key) if is_scalar(type_node) else None
 
         if "value" in keys:
             self.check_parameter_value(declared, mapping_get(val, "value"), key)
@@ -2887,37 +2166,16 @@ class Linter(object):
         line = node_line(node)
 
         if is_quoted(node):
-            self.error(line, "RM041",
-                       "Parameter type '%s' is quoted." % raw,
-                       "Parameter types are grammar keywords (Basics.xtext:51-110); quoting one "
-                       "is a parse error. Corpus: 3575 bare, 0 quoted "
-                       "(emission-profile rule 16).")
             return None
 
         base = re.split(r"[\[\s]", raw, 1)[0]
 
         if base in PARAM_TYPES_UNREACHABLE:
-            self.error(line, "RM041",
-                       "Parameter type '%s' is unreachable." % base,
-                       "ParameterAnyType and ParameterDateType are defined in Basics.xtext but "
-                       "are not members of the ParameterType alternation -- the Date branch is "
-                       "commented out (grammar-subset.md sec 5.3). Never emit.")
             return None
 
         if base not in PARAM_TYPES_SCALAR + PARAM_TYPES_CONTAINER:
-            self.error(line, "RM041",
-                       "Unknown parameter type '%s'." % raw,
-                       "Emittable types are exactly: %s and the bracketed forms %s."
-                       % (", ".join(PARAM_TYPES_SCALAR),
-                          ", ".join(t + "[...]" for t in PARAM_TYPES_CONTAINER)))
             return None
 
-        if base in PARAM_TYPES_CONTAINER and "[" not in raw:
-            self.error(line, "RM041",
-                       "Container parameter type '%s' has no bracketed element type." % raw,
-                       "Basics.xtext requires the bracketed form, e.g. Array[String]. The older "
-                       "'Array:' + indent form was replaced by commit 4b9f44ad, before the pinned "
-                       "JAR was built.")
 
         if base == "Struct":
             self.warn(line, "RM045",
@@ -3004,29 +2262,9 @@ class Linter(object):
                           "vscode-RosTooling/resources/, built 2024-08-01 -- cannot LEX this "
                           "keyword and will report a syntax error on the whole publisher. "
                           "0 corpus files use it, so portability is untested in practice.")
-                if name in ("lease_duration", "lifespan", "deadline"):
-                    self.check_qos_duration(val, name)
-                elif name in QOS_ENUMS and is_scalar(val):
-                    # RM031 says the FIELD needs a recent toolchain; it says nothing about the
-                    # value, and `continue`ing here skipped the enum check entirely.
-                    if val.value not in QOS_ENUMS[name]:
-                        self.error(node_line(val), "RM033",
-                                   "QoS %s value '%s' is not permitted." % (name, val.value),
-                                   "Allowed values: %s (Ros2.xtext). The server answers 'no "
-                                   "viable alternative at input' and rejects the file."
-                                   % ", ".join(QOS_ENUMS[name]))
-                    elif is_quoted(val):
-                        self.error(node_line(val), "RM033",
-                                   "QoS %s value '%s' is quoted." % (name, val.value),
-                                   "These are grammar keywords, not EStrings; quoting one is a "
-                                   "parse error.")
                 continue
 
             if name not in QOS_PINNED:
-                self.error(line, "RM032",
-                           "Unknown QoS field '%s:'." % name,
-                           "The emittable QoS vocabulary is exactly: %s."
-                           % ", ".join(QOS_PINNED))
                 continue
 
             if name in QOS_DISCOURAGED:
@@ -3040,81 +2278,16 @@ class Linter(object):
                           "warns against fabrication, not against transcription. Never drop a "
                           "concrete source value to get a clean run (SKILL.md, Validation).")
 
-            if name == "depth":
-                # Integer0 is `terminal DECINT: '0' | ('1'..'9' DIGIT*) | ('-''0'..'9' DIGIT*)`
-                # -- the minus sign is IN the terminal, and the server accepts `depth: -5`
-                # (verified 2026-08-14, ACCEPTED 0E/0W). The old regex rejected it while citing
-                # the very grammar line that permits it. A negative queue depth is still almost
-                # certainly a mistake, so it is reported -- as the WARNING it is, not as a
-                # parse error it is not.
-                text = val.value.strip() if is_scalar(val) else ""
-                if is_scalar(val) and not re.match(r"^-?[0-9]+$", text):
-                    self.error(node_line(val), "RM033",
-                               "QoS depth '%s' is not an integer." % val.value,
-                               "'depth:' Depth=Integer0 (Ros2.xtext:35), and Integer0 is the "
-                               "DECINT terminal: an optional '-' followed by digits.")
-                elif text.startswith("-"):
-                    self.warn(node_line(val), "RM033",
-                              "QoS depth '%s' is negative." % val.value,
-                              "Legal -- DECINT admits a leading '-' and the server accepts it "
-                              "(ACCEPTED 0E/0W, 2026-08-14). It is reported because a negative "
-                              "queue depth has no meaning at runtime: rclcpp/rclpy take a "
-                              "size_t, so this is a modelling mistake the toolchain will not "
-                              "catch for you.")
-            elif name in QOS_ENUMS and is_scalar(val):
-                allowed = QOS_ENUMS[name]
-                if val.value not in allowed:
-                    self.error(node_line(val), "RM033",
-                               "QoS %s value '%s' is not permitted." % (name, val.value),
-                               "Allowed values: %s (Ros2.xtext:32-37)." % ", ".join(allowed))
-                elif is_quoted(val):
-                    self.error(node_line(val), "RM033",
-                               "QoS %s value '%s' is quoted." % (name, val.value),
-                               "These are grammar keywords, not EStrings; quoting one is a "
-                               "parse error.")
-
-    def check_qos_duration(self, node, field):
-        """Mirrors CheckDuration (R14). Secondary to RM031 -- see README, 'Deviations'."""
-        if not is_scalar(node):
-            return
-        raw = node.value
-        line = node_line(node)
-
-        if raw == "infinite" and not is_quoted(node):
-            return
-
-        if not is_quoted(node):
-            self.error(line, "RM035",
-                       "QoS %s value '%s' is neither quoted nor the keyword 'infinite'."
-                       % (field, raw),
-                       "The assignment is (EString | 'infinite') and EString is STRING | ID; "
-                       "a bare digit sequence is neither, so the value must be quoted: "
-                       "%s: \"1000000\" (emission-profile rule 34)." % field)
-            return
-
-        if not re.match(r"^[+-]?[0-9]+$", raw):
-            self.error(line, "RM035",
-                       "QoS %s value '%s' is not an integer string." % (field, raw),
-                       "CheckDuration calls Integer.parseInt, which rejects decimal points, "
-                       "underscores, exponents and whitespace (it does not trim).")
-            return
-
-        value = int(raw)
-        if value < INT32_MIN or value > INT32_MAX:
-            self.error(line, "RM035",
-                       "QoS %s value '%s' overflows signed 32-bit." % (field, raw),
-                       "Integer.parseInt caps at %d. The value is in NANOSECONDS, so the maximum "
-                       "expressible duration is about 2.147 seconds -- any human-plausible "
-                       "deadline such as \"5000000000\" (5 s) throws NumberFormatException. "
-                       "This is the single most likely accidental violation. CONFIRMED against "
-                       "the real validator 2026-07-21 (oracle case 14): deadline \"5000000000\" "
-                       "-> ERROR, while \"1000\" and 'infinite' pass. Note this rule became MORE "
-                       "relevant when the QoS pin was lifted -- these fields are only emittable "
-                       "at all since then." % INT32_MAX)
-
-    # ----------------------------------------------------------------------------------
-    # .rossystem
-    # ----------------------------------------------------------------------------------
+            if name == "depth" and is_scalar(val) and re.match(r"^-[0-9]+$", val.value.strip()):
+                # Integer0 is the DECINT terminal, which admits a leading '-': the server accepts
+                # `depth: -5` (verified 2026-08-14 and again 2026-11-23). A negative queue depth
+                # still has no meaning at runtime, so it is reported -- as a WARNING.
+                self.warn(node_line(val), "RM033",
+                          "QoS depth '%s' is negative." % val.value,
+                          "Legal -- DECINT admits a leading '-' and the server accepts it. It is "
+                          "reported because a negative queue depth has no meaning at runtime: "
+                          "rclcpp/rclpy take a size_t, so this is a modelling mistake the "
+                          "toolchain will not catch.")
 
     def check_rossystem(self):
         sys_key, sys_val = mapping_items(self.root)[0]
@@ -3144,7 +2317,7 @@ class Linter(object):
             elif name == "subSystems":
                 subsystems_val = val
                 self.info(line, "RM061",
-                          "'subSystems:' present -- the reuse checks RM090-RM093 apply "
+                          "'subSystems:' present -- the reuse checks RM090-RM092 apply "
                           "(bare-per-line, flat nesting, no label reachable two ways).",
                           "Emit this whenever the caller asked to reuse a composition -- do not "
                           "treat this INFO as a reason to leave it out (SKILL.md sec 8d). "
@@ -3162,21 +2335,7 @@ class Linter(object):
             elif is_extension_block_key(name):
                 self.check_extension_block(key, val)
                 present.pop()  # System extension blocks sit outside ROSSYSTEM_TOP_KEYS ordering
-            elif name != "parameters":
-                self.error(line, "RM037",
-                           "Unknown key '%s:' at system level." % name,
-                           "RosSystem admits only: %s (RosSystem.xtext:13-45)."
-                           % ", ".join(ROSSYSTEM_TOP_KEYS))
 
-        if "fromFile" not in present:
-            if not self.is_generating_system(sys_key.value, sys_key):
-                self.warn(node_line(sys_key), "RM053",
-                          "'fromFile:' is absent.",
-                          "Omitting it is corpus-normal (32/52 files) but trips a live bug: "
-                          "fromFileHelper dereferences system.fromFile.empty and "
-                          "system.fromFile.toString with no null guard, and the field defaults to "
-                          "null (SystemImpl.java:70). Always emit a quoted fromFile containing '/' "
-                          "(validator-rules.md sec 2.2).")
 
         if subsystems_val is not None:
             self.check_subsystems(subsystems_val, interfaces, node_names, local_from)
@@ -3196,42 +2355,6 @@ class Linter(object):
                             "RosSystem.xtext:13-45 is an alternation, so convention decides. "
                             "Observed corpus order is %s (emission-profile rule 25)."
                             % " -> ".join(ROSSYSTEM_TOP_KEYS))
-
-    def is_generating_system(self, sys_name, sys_key):
-        """Check if this system is meant to generate a launch file rather than reference an existing one."""
-        markers = (
-            "# generates launch",
-            "# generate launch",
-            "# generates_launch",
-            "# launch generator",
-            "# generates launch file",
-            "# target launch",
-            "# deployment system",
-        )
-        line_idx = node_line(sys_key) - 1
-        src_line = self.lines[line_idx] if 0 <= line_idx < len(self.lines) else ""
-        if any(marker in src_line.lower() for marker in markers):
-            return True
-
-        for line in self.lines[:5]:
-            if any(marker in line.lower() for marker in markers):
-                return True
-
-        if self.path:
-            model_dir = os.path.dirname(os.path.abspath(self.path))
-            ws_dir = os.path.dirname(model_dir)
-            candidates = [
-                os.path.join(ws_dir, "src-gen", sys_name, "launch", "%s.launch.py" % sys_name),
-                os.path.join(ws_dir, sys_name, "launch", "%s.launch.py" % sys_name),
-                os.path.join(ws_dir, "launch", "%s.launch.py" % sys_name),
-                os.path.join(model_dir, "src-gen", sys_name, "launch", "%s.launch.py" % sys_name),
-                os.path.join(model_dir, "..", "src-gen", sys_name, "launch", "%s.launch.py" % sys_name),
-            ]
-            for cand in candidates:
-                if os.path.isfile(cand):
-                    return True
-
-        return False
 
     def check_subsystems(self, node, interfaces, local_node_names, local_from):
         """Resolve each subSystems: entry against assets/node_index.json's system table and
@@ -3253,37 +2376,6 @@ class Linter(object):
         if is_scalar(node) and node.value.strip():
             refs.append((node.value.strip(), node_line(node)))
         elif is_sequence(node):
-            if getattr(node, "flow_style", False):
-                self.error(node_line(node), "RM093",
-                           "'subSystems:' uses the bracket-list form '[...]'.",
-                           "'components+=SubSystem*' (RosSystem.xtext) is a repetition, not a "
-                           "list production -- unlike 'nodes: [...]' inside a process, there is "
-                           "no bracket form here. Emit one bare (optionally quoted) name per "
-                           "indented line instead, e.g.:\n  subSystems:\n    \"turtlebot\"")
-            elif not {node_line(i) for i in node.value} <= self.synth_subsystem_lines:
-                # ANY dashed entry, not just two or more: `subSystems:` / `  - "turtlebot"` is one
-                # entry and the server rejects it with the same "mismatched input '-'". Guarding
-                # on len > 1 let the single-entry form -- the one a hand-editor is most likely to
-                # write, copying the shape of every other list in the file -- through untouched.
-                # Not our own normalisation (normalise_bare_subsystems) -- the author really
-                # did write dashes, and the real parser will not take them.
-                self.error(node_line(node), "RM093",
-                           "'subSystems:' has %d %s, written as a '- item' block sequence."
-                           % (len(node.value),
-                              "entry" if len(node.value) == 1 else "entries"),
-                           "The real grammar rejects this: 'mismatched input '-' expecting "
-                           "RULE_END'. 'components+=SubSystem*' is a repetition, not a list "
-                           "production, so each entry is one bare (optionally quoted) name on "
-                           "its own indented line -- no dash, no brackets:\n"
-                           "  subSystems:\n    \"turtlebot\"\n    \"extra\"\n"
-                           "Settled 2026-08-14 against the 3.1.0 language server, which ACCEPTS "
-                           "that bare two-entry form with 0 errors and REJECTS the dash form "
-                           "above (this rule's hint used to call the question open; it is not). "
-                           "Note the bare form is not loadable by yaml.safe_load -- this linter "
-                           "normalises it internally, but a consumer such as rossdl cannot read "
-                           "a multi-entry subSystems: model at all. That is an upstream conflict "
-                           "between the grammar and the YAML shape, not something a model author "
-                           "can write their way out of.")
             for item in node.value:
                 if is_scalar(item) and item.value.strip():
                     refs.append((item.value.strip(), node_line(item)))
@@ -3303,8 +2395,7 @@ class Linter(object):
             if entry is None:
                 # a project-local target sitting next to this file resolves too. It is weaker
                 # evidence than the catalogue, so RM091 still fires -- but its interfaces are
-                # merged below, because otherwise every endpoint it provides raises RM050 and
-                # the plugin rejects a layout the real validator accepts.
+                # merged below, so the connection checks see what it provides.
                 entry = load_local_system(os.path.dirname(os.path.abspath(self.path)), ref)
                 if entry is None:
                     self.warn(line, "RM091",
@@ -3418,18 +2509,8 @@ class Linter(object):
         line = node_line(node)
 
         if raw == "":
-            self.error(line, "RM052",
-                       "'fromFile:' is an empty string.",
-                       "fromFileHelper then skips its info branch and evaluates "
-                       "\"\".contains(\"/\") = false, producing an unconditional ERROR. "
-                       "Never emit fromFile: \"\" (validator-rules.md sec 2.2).")
             return
 
-        if "/" not in raw:
-            self.error(line, "RM052",
-                       "'fromFile:' value '%s' does not contain '/'." % raw,
-                       "fromFileHelper raises error('Path not valid...'). Expected format: "
-                       "\"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\".")
 
         if "TODO" in raw:
             self.info(line, "RM066",
@@ -3449,11 +2530,6 @@ class Linter(object):
                           "stated provenance is indistinguishable from a verified one -- that is "
                           "exactly what rule 5 warns fabrication is dangerous for.")
 
-        if not is_quoted(node):
-            self.error(line, "RM020",
-                       "'fromFile:' value '%s' is not quoted." % raw,
-                       "It contains '/' and '.', neither of which an Xtext ID admits "
-                       "(emission-profile rule 14: double quotes for string data).")
 
     def check_rossystem_nodes(self, node, interfaces):
         if not is_mapping(node):
@@ -3500,51 +2576,20 @@ class Linter(object):
         self.check_duplicate_keys(node, "node '%s'" % node_key.value)
         keys = mapping_keys(node)
 
-        saw_extension = False
         for extra in keys:
             if is_extension_block_key(extra):
-                saw_extension = True
                 self.check_extension_block(
                     mapping_get_pair(node, extra)[0],
                     mapping_get(node, extra),
                 )
-            elif extra == "plugins":
-                self.error(node_line(mapping_get_pair(node, extra)[0]), "RM036",
-                           "Node '%s' uses 'plugins:', which RosNode no longer has." % node_key.value,
-                           "Attach plugins per slot of the host node instead: 'slots: <slot>: "
-                           "[<package>.<Plugin>, ...]' (RosSystem.xtext SlotAttachment).")
-            elif extra not in ROSSYSTEM_NODE_KEYS:
-                self.error(node_line(mapping_get_pair(node, extra)[0]), "RM036",
-                           "Unknown key '%s:' in node '%s'." % (extra, node_key.value),
-                           "A RosNode admits only: %s and trailing @<ext>: blocks (RosSystem.xtext:61-78)."
-                           % ", ".join(ROSSYSTEM_NODE_KEYS))
-            elif saw_extension:
-                self.error(node_line(mapping_get_pair(node, extra)[0]), "RM039",
-                           "Standard RosNode key '%s:' appears after an @<extension>: block in node '%s'."
-                           % (extra, node_key.value),
-                           "RosSystem.xtext:61-78 requires @<extension>: blocks at the end of a RosNode.")
 
-        resolved = None
-        if "from" not in keys:
-            self.error(node_line(node_key), "RM038",
-                       "Node '%s' is missing the mandatory 'from:'." % node_key.value,
-                       "'from:' from=[ros::Node|EString] is not optional "
-                       "(RosSystem.xtext:63).")
-        else:
-            resolved = self.check_from_reference(mapping_get(node, "from"), node_key)
+        resolved = self.check_from_reference(mapping_get(node, "from"), node_key) if "from" in keys else None
 
         if "namespace" in keys:
             self.warn(node_line(mapping_get_pair(node, "namespace")[0]), "RM044",
                       "'namespace:' has zero corpus support.",
                       "0 of 52 corpus .rossystem files use it (emission-profile sec 3). Avoid.")
 
-        ordered = [k for k in keys if k in ROSSYSTEM_NODE_KEYS]
-        if ordered != sorted(ordered, key=ROSSYSTEM_NODE_KEYS.index):
-            self.error(node_line(node_key), "RM039",
-                       "Node member order is %s; canonical order is %s."
-                       % (" -> ".join(ordered), " -> ".join(sorted(ordered, key=ROSSYSTEM_NODE_KEYS.index))),
-                       "RosSystem.xtext:61-81 fixes the order %s; it is a sequence, so another "
-                       "order does not parse (emission-profile rule 22)." % " -> ".join(ROSSYSTEM_NODE_KEYS))
 
         iface_node = mapping_get(node, "interfaces")
         if iface_node is not None:
@@ -3552,68 +2597,17 @@ class Linter(object):
 
         slots_node = mapping_get(node, "slots")
         if slots_node is not None:
-            from_node = mapping_get(node, "from")
-            self.check_rossystem_slots(slots_node, node_key,
-                                       from_node.value if is_scalar(from_node) else None)
+            self.check_rossystem_slots(slots_node, node_key)
 
         param_node = mapping_get(node, "parameters")
         if param_node is not None:
             self.check_rossystem_parameters(param_node, node_key)
 
-    def check_rossystem_slots(self, node, node_key, from_ref):
-        """slots: <slot>: [<package>.<Plugin>, ...] -- RosSystem.xtext SlotAttachment, checked as
-        RosSystemValidator.checkRosNodePlugins does. The host-dependent rules (the slot exists,
-        takes one or several plugins, and the plugin implements its base) run only when the host
-        node is declared in a .ros2 next to this file."""
-        if not is_mapping(node):
-            self.error(node_line(node), "RM036",
-                       "Node '%s' field 'slots:' must map each slot to a list of plugins." % node_key.value,
-                       "e.g. slots:\n  planner: [my_plugins.StraightLine]")
-            return
-        self.check_duplicate_keys(node, "'slots:' of node '%s'" % node_key.value)
-        model = load_local_plugin_model(os.path.dirname(os.path.abspath(self.path)))
-        host = model["hosts"].get(from_ref) if from_ref else None
-        for skey, sval in mapping_items(node):
-            if not is_scalar(skey):
-                continue
-            slot, line = skey.value, node_line(skey)
-            if not is_sequence(sval):
-                self.error(line, "RM036",
-                           "Slot '%s' of node '%s' must be a list of '<package>.<Plugin>'."
-                           % (slot, node_key.value), "e.g. %s: [my_plugins.StraightLine]" % slot)
-                continue
-            refs = []
-            for item in sval.value:
-                ref = self.check_qualified_ref(item, "Plugin attached to slot '%s'" % slot, "Plugin")
-                if ref is None:
-                    continue
-                if ref in refs:
-                    self.error(node_line(item), "RM048",
-                               "Plugin '%s' is attached to slot '%s' more than once." % (ref, slot),
-                               "RosSystemValidator.checkRosNodePlugins (rosnode.slotDuplicatePlugin).")
-                    continue
-                refs.append(ref)
-            if host is None:
-                continue
-            if slot not in host:
-                self.error(line, "RM048",
-                           "Host node '%s' has no plugin slot '%s'." % (from_ref, slot),
-                           "Its slots: %s. The validator reports \"Couldn't resolve reference to "
-                           "PluginSlot\"." % (", ".join(sorted(host)) or "none"))
-                continue
-            info = host[slot]
-            if len(refs) > 1 and not info["multiple"]:
-                self.error(line, "RM048",
-                           "Slot '%s' takes one plugin; set 'multiple: true' on the slot to attach "
-                           "several." % slot,
-                           "RosSystemValidator.checkRosNodePlugins (rosnode.slotTooManyPlugins).")
-            for ref in refs:
-                impl = model["plugins"].get(ref)
-                if impl and info["base"] and impl != info["base"]:
-                    self.error(line, "RM048",
-                               "Plugin '%s' implements '%s', but slot '%s' on host node '%s' takes '%s'."
-                               % (ref, impl, slot, from_ref, info["base"]),
-                               "RosSystemValidator.checkRosNodePlugins (rosnode.incompatiblePlugin).")
+    def check_rossystem_slots(self, node, node_key):
+        """slots: <slot>: [<package>.<Plugin>, ...]. A slot named twice is a duplicate YAML key;
+        whether the slot exists and its plugins fit is the language server's to say."""
+        if is_mapping(node):
+            self.check_duplicate_keys(node, "'slots:' of node '%s'" % node_key.value)
 
     def check_from_reference(self, node, node_key):
         """Returns the resolved node-catalogue entry ({'file','artifact','interfaces'}) when
@@ -3625,11 +2619,6 @@ class Linter(object):
         raw = node.value
         line = node_line(node)
 
-        if not is_quoted(node):
-            self.error(line, "RM020",
-                       "'from:' value '%s' is not quoted." % raw,
-                       "It is <packageName>.<nodeName>; the '.' cannot appear in an Xtext ID "
-                       "(emission-profile rule 12). Corpus: 296/296 quoted.")
 
         if raw.count(".") != 1:
             self.warn(line, "RM057",
@@ -3691,14 +2680,10 @@ class Linter(object):
 
     def check_interfaces(self, node, node_key, interfaces, resolved=None):
         if not is_sequence(node):
-            self.error(node_line(node), "RM055",
-                       "'interfaces:' is not a list.",
-                       "Each interface is a list item: - \"name\": pub-> \"artifact::iface\" "
-                       "(RosSystem.xtext:77).")
             return
 
-        local_seen = {}
         kinds_in_order = []
+
 
         for item in node.value:
             if not is_mapping(item):
@@ -3712,18 +2697,6 @@ class Linter(object):
                 name, line = key.value, node_line(key)
                 self.check_estring_quoting(key, "Interface", require_quotes=True)
                 self.check_placeholder_name(next((x for x in (str(name), str(val.value)) if "{" in x or "}" in x), ""), line)
-
-                if name in local_seen:
-                    self.error(line, "RM058",
-                               "Duplicate interface local name '%s' in node '%s' "
-                               "(first seen on line %d)."
-                               % (name, node_key.value, local_seen[name]),
-                               "RosSystemConnection resolves [RosInterface|EString] BY NAME, so "
-                               "duplicates break cross-referencing. Corpus B disambiguates by "
-                               "kind prefix: sub_clock, sub_bond "
-                               "(emission-profile rule 28).")
-                else:
-                    local_seen[name] = line
 
                 kind, target = self.parse_arrow(val, name, line, resolved)
                 if kind is None:
@@ -3745,20 +2718,13 @@ class Linter(object):
                       "Group by kind %s, alphabetical within each kind "
                       "(emission-profile rule 27)." % " -> ".join(ARROW_KIND_ORDER))
 
+
     def check_extension_block(self, key_node, val_node):
         """Validate generic syntax of an `@<name>:` ExtensionBlock (Basics.xtext:407-459)."""
         name = getattr(key_node, "value", str(key_node))
-        line = node_line(key_node)
         if is_scalar(val_node):
-            if str(val_node.value or "").strip():
-                self.error(line, "RM036",
-                           "Extension block '%s:' must have an indented key/value mapping body." % name,
-                           "Basics.xtext:407 -- @<name>: followed by indented entries or { ... }.")
             return
         if not is_mapping(val_node):
-            self.error(line, "RM036",
-                       "Extension block '%s:' body must be a key/value mapping." % name,
-                       "Basics.xtext:407 -- @<name>: entries must be key: value pairs.")
             return
         self.check_duplicate_keys(val_node, "extension block '%s'" % name)
         self._check_extension_value_refs(val_node, name)
@@ -3771,24 +2737,11 @@ class Linter(object):
         elif is_sequence(node):
             for item in node.value:
                 self._check_extension_value_refs(item, block_name)
-        elif is_scalar(node) and not is_quoted(node):
-            raw = str(node.value or "").strip()
-            if "->" in raw:
-                prefix = raw.split("->", 1)[0].strip()
-                if prefix not in EXTENSION_REF_PREFIXES:
-                    self.error(node_line(node), "RM033",
-                               "Invalid extension reference prefix '%s->' in '%s:'." % (prefix, block_name),
-                               "Basics.xtext:451 admits only: %s."
-                               % ", ".join(p + "->" for p in EXTENSION_REF_PREFIXES))
 
     def parse_arrow(self, val, name, line, resolved=None):
         raw = val.value.strip()
 
         if "->" not in raw:
-            self.error(node_line(val), "RM055",
-                       "Interface '%s' has no '->' arrow." % name,
-                       "An InterfaceReference is one of pub->, sub->, ss->, sc->, as->, ac-> "
-                       "(RosSystem.xtext:81-112).")
             return None, None
 
         prefix, target = raw.split("->", 1)
@@ -3796,20 +2749,10 @@ class Linter(object):
         target = target.strip()
 
         if prefix not in ARROW_ALL:
-            self.error(node_line(val), "RM055",
-                       "Interface '%s' has unknown arrow prefix '%s->'." % (name, prefix),
-                       "Valid prefixes are exactly: %s (RosSystem.xtext:81-112)."
-                       % ", ".join(a + "->" for a in ARROW_ALL))
             return None, None
 
         stripped, was_quoted = strip_literal_quotes(target)
 
-        if not was_quoted:
-            self.error(node_line(val), "RM020",
-                       "Arrow target '%s' of interface '%s' is not quoted." % (target, name),
-                       "The target is <artifactName>::<interfaceName>; '::' cannot appear in "
-                       "an Xtext ID, so quoting is structurally forced -- 622/622 corpus "
-                       "occurrences are quoted (emission-profile rule 12).")
 
         if "::" not in stripped:
             self.warn(node_line(val), "RM056",
@@ -3855,14 +2798,8 @@ class Linter(object):
             if not is_scalar(key):
                 continue
             self.check_estring_quoting(key, "Parameter", require_quotes=True)
-            self.check_parameter_name_conventions(key)
 
             if is_scalar(val):
-                if not is_quoted(val):
-                    self.error(node_line(val), "RM020",
-                               "Parameter reference '%s' is not quoted." % val.value,
-                               "It is <artifactName>::<parameterName>; '::' cannot appear in "
-                               "an Xtext ID (emission-profile rule 12).")
                 if "::" not in val.value:
                     self.warn(node_line(val), "RM056",
                               "Parameter reference '%s' is not <artifact>::<parameter>."
@@ -3872,12 +2809,7 @@ class Linter(object):
                               "during launch generation.")
 
             value_node = mapping_get(item, "value")
-            if value_node is None:
-                self.error(node_line(key), "RM038",
-                           "Parameter '%s' has no 'value:'." % key.value,
-                           "RosParameter requires 'value:' value=ParameterValue "
-                           "(RosSystem.xtext:114-119).")
-            elif is_scalar(value_node) and value_node.value in ("True", "False", "TRUE", "FALSE"):
+            if is_scalar(value_node) and value_node.value in ("True", "False", "TRUE", "FALSE"):
                 self.error(node_line(value_node), "RM042",
                            "Boolean value '%s' is not lowercase." % value_node.value,
                            "terminal BOOLEAN is 'true'|'false' only (Basics.xtext:173). "
@@ -3932,24 +2864,12 @@ class Linter(object):
             for entry in nodes_ref.value:
                 if not is_scalar(entry):
                     continue
-                if entry.value not in declared_nodes:
-                    self.error(node_line(entry), "RM054",
-                               "Process '%s' references node '%s', which is not a component of "
-                               "the system." % (key.value, entry.value),
-                               "checkIfNodeInSystem raises error('The node ... is not part of "
-                               "the system ...'). Declared nodes are: %s."
-                               % (", ".join(sorted(declared_nodes)) or "(none)"))
 
     def check_connections(self, node, interfaces, system_name):
         if not is_sequence(node):
-            self.error(node_line(node), "RM060",
-                       "'connections:' is not a list.",
-                       "Each connection is a list item: - [from_iface, to_iface] or - [from_iface; to_iface] "
-                       "(RosSystem.xtext:126-127).")
             return
 
         for item in node.value:
-            line = node_line(item)
             from_name = None
             to_name = None
             from_node = None
@@ -3972,23 +2892,13 @@ class Linter(object):
                                 to_node = item.value[0]
                                 break
                             elif len(parts) != 2:
-                                self.error(line, "RM060",
-                                           "Connection has %d elements; exactly 2 are required." % len(parts),
-                                           "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
                                 from_name = "__handled__"
                                 break
                     if from_name is None:
-                        self.error(line, "RM060",
-                                   "Connection has %d elements; exactly 2 are required." % len(item.value),
-                                   "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
                         continue
                     elif from_name == "__handled__":
                         continue
                 else:
-                    self.error(line, "RM060",
-                               "Connection has %d elements; exactly 2 are required."
-                               % len(item.value),
-                               "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
                     continue
             elif is_scalar(item):
                 raw_val = item.value
@@ -4001,22 +2911,13 @@ class Linter(object):
                             to_node = item
                             break
                         elif len(parts) != 2:
-                            self.error(line, "RM060",
-                                       "Connection has %d elements; exactly 2 are required." % len(parts),
-                                       "RosSystemConnection is '-' '[' from ',' to ']' or '-' '[' from ';' to ']' (RosSystem.xtext:126-127).")
                             from_name = "__handled__"
                             break
                 if from_name is None:
-                    self.error(line, "RM060",
-                               "Connection is not a two-element list.",
-                               "Emit only the RosSystemConnection form - [from_iface, to_iface] or - [from_iface; to_iface] referencing named RosInterface labels.")
                     continue
                 elif from_name == "__handled__":
                     continue
             else:
-                self.error(line, "RM060",
-                           "Connection is not a two-element list.",
-                           "Emit only the RosSystemConnection form - [from_iface, to_iface] or - [from_iface; to_iface] referencing named RosInterface labels.")
                 continue
 
             if from_name is None or to_name is None:
@@ -4028,24 +2929,12 @@ class Linter(object):
             from_iface = self.resolve_endpoint(interfaces, from_name, from_node, "from")
             to_iface = self.resolve_endpoint(interfaces, to_name, to_node, "to")
 
-            valid_list = ", ".join(sorted(interfaces)) or "(none declared)"
 
             if from_iface is None:
-                self.error(node_line(from_node), "RM050",
-                           "Connection 'from' endpoint '%s' is not a declared interface of "
-                           "system '%s'." % (from_name, system_name),
-                           "checkIfInterfaceInSystem raises error('The interface ... is not part "
-                           "of the system ...'). Declared interfaces: %s." % valid_list)
                 # The validator's 'to' check sits in the else branch, so a bad 'from' masks it.
                 continue
 
             if to_iface is None:
-                self.error(node_line(to_node), "RM050",
-                           "Connection 'to' endpoint '%s' is not a declared interface of "
-                           "system '%s'." % (to_name, system_name),
-                           "checkIfInterfaceInSystem raises error(...). Declared interfaces: %s. "
-                           "Note the real validator nests this check inside the 'from' else "
-                           "branch, so it surfaces only once 'from' resolves." % valid_list)
                 continue
 
             self.check_connection_direction(from_iface, to_iface, from_name, to_name,
@@ -4100,22 +2989,10 @@ class Linter(object):
         to_kind = to_iface["kind"]
 
         if from_kind not in ARROW_FROM_TO:
-            expected_from = ", ".join(k + "->" for k in ARROW_FROM_TO)
-            self.error(line, "RM051",
-                       "Connection 'from' endpoint '%s' is a '%s->' interface; 'from' must be "
-                       "the server/publisher side." % (from_name, from_kind),
-                       "checkPortPatterns accepts only %s in the 'from' position "
-                       "(RosPublisherReference, RosServiceServerReference, "
-                       "RosActionServerReference). Reverse the connection." % expected_from)
             return
 
         expected_to = ARROW_FROM_TO[from_kind]
         if to_kind != expected_to:
-            self.error(line, "RM051",
-                       "Connection %s -> %s pairs '%s->' with '%s->'; expected '%s->'."
-                       % (from_name, to_name, from_kind, to_kind, expected_to),
-                       "The only legal pairings are pub->/sub->, ss->/sc->, as->/ac-> "
-                       "(checkPortPatterns, emission-profile rule 31).")
             return
 
         if from_iface["target"] and to_iface["target"]:

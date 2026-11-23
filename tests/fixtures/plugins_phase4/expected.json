@@ -1,5 +1,5 @@
 {
-  "about": "Verdicts of the real RosTooling language server (tests/oracle/ask_oracle.py, server jar of RosTooling_Extension built from RosTooling esa/feature/plugin-architecture at commit 9f781be8, no language plugins enabled), recorded 2026-11-23. true = the server reported at least one error in that file. To refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/plugins_phase4/p4-*",
+  "about": "Verdicts of the real RosTooling language server (tests/oracle/ask_oracle.py, server jar of RosTooling_Extension built from RosTooling esa/feature/plugin-architecture at commit 9f781be8, no language plugins enabled), recorded 2026-11-23. true = the server reported at least one error in that file. To refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/plugins_phase4/p4-* The linter no longer judges plugin syntax (rosmodel_lint cut, 2026-11-23); tests/test_lifecycle_and_scoping.py checks that it raises no error on a file the server accepts.",
   "verdicts": {
     "p4-01-valid": {
       "core.ros2": false,
@@ -91,12 +91,6 @@
     "p4-27-valid-empty-slot-spaced": {
       "core.ros2": false,
       "sys.rossystem": false
-    }
-  },
-  "deliberate": {
-    "p4-11-neg-unknown-loader/core.ros2": {
-      "lint_rule": "RM047",
-      "why": "The server rejects a base whose loader no enabled language plugin registers. Which plugins are enabled is known only where the model is used, so the linter warns (RM047) instead of failing."
     }
   }
 }

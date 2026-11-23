@@ -90,6 +90,17 @@ CASES = [
     ("RM079", "probe_msgs.ros", None, "probe_msgs {\n  msgs {\n    Reading {\n      message {\n        float64 value\n      }\n    }\n  }\n}\n"),
     ("RM093", "probe_sys.rossystem", "  processes:\n", "  subSystems: [\"other\"]\n  processes:\n"),
     ("RM094", "probe_sys.rossystem", "    \"listener\":\n", "# a comment at column 0 inside nodes:\n    \"listener\":\n"),
+    # Further checks the removed rule ids bundled, probed one by one (2026-11-23, step 2).
+    ("RM036-active-in-on-plain-node", "probe_pkg.ros2", "      subscribers:\n        'chatter':\n          type: 'probe_msgs/msg/Reading'\n", "      subscribers:\n        'chatter':\n          type: 'probe_msgs/msg/Reading'\n          active_in: [Active]\n"),
+    ("RM033-bad-lifecycle-state", "probe_pkg.ros2", "      node: listener\n      subscribers:\n        'chatter':\n          type: 'probe_msgs/msg/Reading'\n", "      node: listener\n      lifecycle: true\n      subscribers:\n        'chatter':\n          type: 'probe_msgs/msg/Reading'\n          active_in: [Configuring]\n"),
+    ("RM033-quoted-lifecycle", "probe_pkg.ros2", "      node: listener\n", "      node: listener\n      lifecycle: \"true\"\n"),
+    ("RM033-bad-block-ref-prefix", "probe_pkg.ros2", "          default: 10\n", "          default: 10\n      @audit:\n        broken: foo->bar\n"),
+    ("RM036-block-on-nodeless-artifact", "probe_pkg.ros2", "    listener:\n", "    lib_only:\n      @audit:\n        channel: \"bad\"\n    listener:\n"),
+    ("RM039-block-before-from", "probe_sys.rossystem", "    \"listener\":\n      from: \"probe_pkg.listener\"\n", "    \"listener\":\n      @audit:\n        channel: \"early\"\n      from: \"probe_pkg.listener\"\n"),
+    ("RM035-duration-overflow", "probe_pkg.ros2", "            reliability: reliable\n", "            reliability: reliable\n            deadline: \"99999999999\"\n"),
+    ("RM073-srv-without-response", "probe_msgs.ros", "probe_msgs:\n", "probe_msgs:\n  srvs:\n    Ping\n      request\n        string q\n"),
+    ("RM041-array-without-element", "probe_pkg.ros2", "type: Integer\n          default: 10", "type: Array"),
+    ("RM038-system-parameter-without-value", "probe_sys.rossystem", "        - \"chatter_pub\": pub-> \"talker::chatter\"\n", "        - \"chatter_pub\": pub-> \"talker::chatter\"\n      parameters:\n        - \"rate\": \"talker::rate\"\n"),
 ]
 
 out = sys.argv[1]
@@ -100,13 +111,13 @@ for rule, target, old, new in CASES:
     else:
         assert old in files[target], (rule, old)
         files[target] = files[target].replace(old, new, 1)
-    d = os.path.join(out, "%s" % rule)
+    d = os.path.join(out, rule)
     os.makedirs(d, exist_ok=True)
     for name, text in files.items():
         with open(os.path.join(d, name), "w") as fh:
             fh.write(text)
     with open(os.path.join(d, "case.json"), "w") as fh:
-        json.dump({"rule": rule, "file": target}, fh)
+        json.dump({"rule": rule.split("-")[0], "file": target}, fh)
 base = os.path.join(out, "base")
 os.makedirs(base, exist_ok=True)
 for name, text in BASE.items():

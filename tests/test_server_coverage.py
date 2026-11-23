@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""The server-coverage fixture (tests/fixtures/server_coverage): one minimal case per
-rosmodel_lint rule that copies a grammar or validator rule, with what the real language server
-reported for it in expected.json. A case only proves something while it still trips its rule,
-so this checks that against the linter; the server side is refreshed with tests/oracle/ask_oracle.py."""
+"""The server-coverage fixture (tests/fixtures/server_coverage): one minimal case per check that
+rosmodel_lint.py used to copy from the grammar or the validator, with what the real language
+server reported for it in expected.json. Those checks were removed from the linter (cut, step 2):
+the server reports every case, so the linter leaves them to it. Refresh the server side with
+tests/oracle/ask_oracle.py; regenerate the cases with make_cases.py in that folder."""
 
 import json
 import os
@@ -22,6 +23,11 @@ def _findings(path):
     return linter.findings
 
 
+def _expected():
+    with open(os.path.join(CASES, "expected.json")) as fh:
+        return json.load(fh)["cases"]
+
+
 def test_base_is_clean():
     base = os.path.join(CASES, "base")
     for name in sorted(os.listdir(base)):
@@ -30,17 +36,22 @@ def test_base_is_clean():
         assert not errors, (name, errors)
 
 
-def test_every_case_trips_its_rule_and_has_a_server_verdict():
-    with open(os.path.join(CASES, "expected.json")) as fh:
-        expected = json.load(fh)["cases"]
+def test_every_case_is_reported_by_the_server():
+    expected = _expected()
     dirs = sorted(d for d in os.listdir(CASES) if os.path.isfile(os.path.join(CASES, d, "case.json")))
     assert dirs == sorted(expected), "expected.json and the case folders differ"
-    missing = []
-    for d in dirs:
+    # RM053's model is valid (no fromFile: means the generator writes the bringup package).
+    silent = sorted(d for d, v in expected.items() if not v["server"] and "note" not in v)
+    assert not silent, "cases the server does not report: %s" % silent
+
+
+def test_the_linter_leaves_every_case_to_the_server():
+    still_raised = []
+    for d, v in sorted(_expected().items()):
         with open(os.path.join(CASES, d, "case.json")) as fh:
-            case = json.load(fh)
-        assert expected[d]["file"] == case["file"], d
-        rules = {f.rule for f in _findings(os.path.join(CASES, d, case["file"]))}
-        if case["rule"] not in rules:
-            missing.append((d, case["rule"], sorted(rules)))
-    assert not missing, missing
+            rule = json.load(fh)["rule"]
+        errors = [f for f in _findings(os.path.join(CASES, d, v["file"]))
+                  if f.rule == rule and f.severity == rosmodel_lint.ERROR]
+        if errors:
+            still_raised.append((d, [f.message for f in errors]))
+    assert not still_raised, still_raised

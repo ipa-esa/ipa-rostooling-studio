@@ -108,8 +108,9 @@ it). A single, flat `subSystems:` entry is fine and tested — see rule 12. Use 
 - **`validate_ros_model` is the authoritative validator** for `.ros`, `.ros2`, and `.rossystem`
   files (`"isValid": true` with `errorCount === 0` required). Always ensure referenced `.ros` and
   `.ros2` dependencies sit in the workspace directory before validating.
-- **`scripts/rosmodel_lint.py` is secondary / offline only** (checking catalogue provenance `# ...`
-  comments and subsystem anti-patterns when offline or running `PostToolUse` hooks). Never treat
+- **`scripts/rosmodel_lint.py` is secondary** (catalogue provenance `# ...` comments, subsystem
+  anti-patterns, style and silently-corrupting values; it no longer checks grammar or validation
+  itself — `--server` asks the language server for those). Never treat
   it as a replacement for semantic MCP authoring + `validate_ros_model`.
 - Never claim a file has been validated against the real toolchain unless `validate_ros_model` (or
   live semantic MCP tool diagnostics) returned `errorCount === 0`. If no MCP server / Java 21

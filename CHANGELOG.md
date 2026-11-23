@@ -8,17 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **Phase 4 plugin syntax in `rosmodel_lint.py`** (breaking for models in the old syntax, which the language server no longer parses either):
-  - Packages may declare `pluginbases:` (`class:`, `header:`, `loader:`, all required); a plugin starts with `implements: <package>.<Base>` and has no `loader:`; an artifact holds `node:` or `plugins:`, never both.
-  - A pluginslot declares its own parameter, which must no longer also appear under the node's `parameters:` (the old rule required the opposite); slots take `multiple:` and reference bases and default plugins as `<package>.<Name>`.
-  - A `.rossystem` node attaches plugins per slot under `slots:` instead of `plugins: [...]`; member order there and in an AmentPackage is now an error, since the grammar fixes it.
-  - New rules `RM047` (loader other than `pluginlib`, WARNING) and `RM048` (plugin and slot consistency, ERROR).
+- **`rosmodel_lint.py` no longer copies the grammar or the validator.** 34 rules that did were retired (`RETIRED_RULES`; table in `scripts/README.md`): the RosTooling language server reports every case of them (`tests/fixtures/server_coverage`), and `--server` asks it (`RM100`). What stays is what the server does not check: provenance, catalogue and subsystem reuse, style, and values that parse but change meaning. `RM033` keeps only its negative-QoS-depth warning and `RM039` only its order warnings. The linter reads the Phase 4 plugin syntax (`pluginbases:`, `implements: <package>.<Base>`, `slots:`) without errors; judging it is the server's.
 - **`ros_plot.py`** reads `slots:` and shows each node's plugins per slot.
 - **Agent skills** (`ros-model`, `ros-modeler`, `ros-system-builder`, `ros-node-developer`) describe the new plugin syntax and the `ros2_add_plugin_base` and `ros_attach_plugins` MCP tools.
 
 ### Added
 - **`rosmodel_lint.py --server {auto,require,off}`** (default `auto`): asks the real RosTooling language server once per run and reports its diagnostics as `RM100`; a run that did not ask it says so with `RM101` (INFO, WARNING or ERROR by mode). The Java/jar discovery and LSP client moved from `tests/oracle/ask_oracle.py` to `scripts/ros_server.py`, which the oracle CLI now wraps. The hook and the extractors pass `--server off`.
-- `tests/fixtures/server_coverage/`: one case per linter rule that copies a grammar or validator rule, with the language server's finding for each.
+- `tests/fixtures/server_coverage/`: one case per retired check, with the language server's finding for each.
 - `tests/fixtures/plugins_phase4/`: 27 plugin-syntax cases with the language server's verdicts; a test holds the linter to the same verdicts.
 
 ## [0.3.0] - 2026-11-18
