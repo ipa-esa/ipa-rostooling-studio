@@ -1,0 +1,23 @@
+probe_pkg:
+  pluginbases:
+    Leaf:
+      class: "probe::Leaf"
+      header: "probe/leaf.hpp"
+      loader: bt
+  artifacts:
+    talker:
+      node: talker
+      publishers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'
+          qos:
+            reliability: reliable
+      parameters:
+        'rate':
+          type: Integer
+          default: 10
+    listener:
+      node: listener
+      subscribers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'

@@ -1,0 +1,8 @@
+probe_msgs:
+  msgs:
+    Reading
+      message
+        float65 value
+    Pair
+      message
+        'probe_msgs/msg/Reading' first

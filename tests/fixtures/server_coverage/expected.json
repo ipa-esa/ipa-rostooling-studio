@@ -1,0 +1,185 @@
+{
+  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8, no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/*",
+  "cases": {
+    "RM010": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "The name of a package has to follow the ROS naming conventions: Capital letters are not allowed"
+    },
+    "RM011": {
+      "file": "probe_pkg.ros2",
+      "server": "WARNING",
+      "server_message": "The name of a artifact should follow the ROS naming conventions: Capital letters are not recommended"
+    },
+    "RM012": {
+      "file": "probe_pkg.ros2",
+      "server": "WARNING",
+      "server_message": "The name of a node should follow the ROS naming conventions: Capital letters are not recommended"
+    },
+    "RM013": {
+      "file": "probe_pkg.ros2",
+      "server": "WARNING",
+      "server_message": "The name of a parameter has to follow the ROS naming conventions: Capital letters are not recommended"
+    },
+    "RM016": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '-e' expecting RULE_END"
+    },
+    "RM020": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Invalid token probe_msgs/msg/Reading"
+    },
+    "RM021": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input '\"listener\"'"
+    },
+    "RM030": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input 'msgs:' expecting RULE_END"
+    },
+    "RM032": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input 'speed'"
+    },
+    "RM033": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input 'sometimes'"
+    },
+    "RM035": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Durations of lease_duration, lifespan, deadline should be specified as a string of nanoseconds which can convert to int, or as infinite"
+    },
+    "RM036": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "missing RULE_END at 'typo'"
+    },
+    "RM037": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input 'version' expecting RULE_END"
+    },
+    "RM038": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input 'interfaces:' expecting 'from:'"
+    },
+    "RM039": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input 'namespace:' expecting RULE_END"
+    },
+    "RM041": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input 'Float'"
+    },
+    "RM047": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Plugin base 'Leaf' uses loader 'bt', which no enabled plugin registers. Known loaders: pluginlib"
+    },
+    "RM048": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "PluginSlot 'planner' declares parameter 'rate', which is also listed under the parameters of node 'talker'; remove it there, the slot declares it"
+    },
+    "RM050": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "Couldn't resolve reference to RosInterface 'nope'."
+    },
+    "RM051": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "The type of the interface system.impl.RosInterfaceImpl@2cbe4701 (name: chatter_sub) is not valid, the output port can have only one of the following types [RosPublisherReference, RosServiceServerRefer"
+    },
+    "RM052": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "Path not valid, the format for the FromFile attribute is: \"NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py\""
+    },
+    "RM053": {
+      "file": "probe_sys.rossystem",
+      "server": null,
+      "server_message": null
+    },
+    "RM054": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "Couldn't resolve reference to Component 'ghost'."
+    },
+    "RM055": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input 'pubx'"
+    },
+    "RM058": {
+      "file": "probe_sys.rossystem",
+      "server": null,
+      "server_message": null
+    },
+    "RM060": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input ']'"
+    },
+    "RM070": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "missing ':' at ''"
+    },
+    "RM071": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "missing RULE_END at 'bogus'"
+    },
+    "RM073": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "extraneous input ':' expecting RULE_BEGIN"
+    },
+    "RM074": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "Couldn't resolve reference to TopicSpec 'float65'."
+    },
+    "RM075": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "Invalid token float64[3"
+    },
+    "RM076": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "Couldn't resolve reference to TopicSpec 'probe_msgs/Reading'."
+    },
+    "RM077": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "mismatched input '=' expecting RULE_END"
+    },
+    "RM079": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "mismatched input '{' expecting ':'"
+    },
+    "RM093": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input '[' expecting RULE_BEGIN"
+    },
+    "RM094": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "missing EOF at ''"
+    }
+  }
+}

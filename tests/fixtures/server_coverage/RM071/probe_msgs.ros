@@ -1,0 +1,9 @@
+probe_msgs:
+  bogus:
+  msgs:
+    Reading
+      message
+        float64 value
+    Pair
+      message
+        'probe_msgs/msg/Reading' first

@@ -1,0 +1,27 @@
+probe_pkg:
+  pluginbases:
+    Planner:
+      class: "probe::Planner"
+      header: "probe/planner.hpp"
+      loader: pluginlib
+  artifacts:
+    talker:
+      node: talker
+      publishers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'
+          qos:
+            reliability: reliable
+      parameters:
+        'rate':
+          type: Integer
+          default: 10
+      pluginslots:
+        planner:
+          base: probe_pkg.Planner
+          parameter: rate
+    listener:
+      node: listener
+      subscribers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'

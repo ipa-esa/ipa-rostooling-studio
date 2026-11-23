@@ -1,0 +1,9 @@
+probe_msgs:
+  msgs:
+    Reading
+      message
+        float64 value
+        uint8 MODE = 1
+    Pair
+      message
+        'probe_msgs/msg/Reading' first

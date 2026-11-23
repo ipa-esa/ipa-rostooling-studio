@@ -1,0 +1,22 @@
+probe_pkg:
+  msgs:
+    Extra
+      message
+        float64 x
+  artifacts:
+    talker:
+      node: talker
+      publishers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'
+          qos:
+            reliability: reliable
+      parameters:
+        'rate':
+          type: Integer
+          default: 10
+    listener:
+      node: listener
+      subscribers:
+        'chatter':
+          type: 'probe_msgs/msg/Reading'

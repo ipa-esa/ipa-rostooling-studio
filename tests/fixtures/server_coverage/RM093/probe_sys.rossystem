@@ -1,0 +1,17 @@
+probe_sys:
+  fromFile: "probe_sys/launch/probe.launch.py"  # caller-supplied
+  subSystems: ["other"]
+  processes:
+    "main":
+      nodes: [talker, listener]
+  nodes:
+    "talker":
+      from: "probe_pkg.talker"
+      interfaces:
+        - "chatter_pub": pub-> "talker::chatter"
+    "listener":
+      from: "probe_pkg.listener"
+      interfaces:
+        - "chatter_sub": sub-> "listener::chatter"
+  connections:
+    - ["chatter_pub", "chatter_sub"]
