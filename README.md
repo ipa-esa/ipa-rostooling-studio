@@ -70,10 +70,13 @@ still reads the older singular `.agent/skills/`, but new work should target the 
 
 Two things this does **not** cover, on purpose:
 
-- **The auto-lint hook.** In Claude Code, `hooks/hooks.json` fires `rosmodel_lint.py` after
-  every write to a `.ros2`/`.rossystem` file automatically. Antigravity has no equivalent
-  auto-run mechanism, so every ported skill that touches a model file — including `ros-model`
-  itself — now says explicitly to run the linter by hand.
+- **The auto-lint hook.** In Claude Code, `hooks/hooks.json` fires `rosmodel_lint.py --hook`
+  after every write to a `.ros`, `.ros2` or `.rossystem` file automatically: it runs the fast kept
+  rules without starting the JVM language server, blocks on an `ERROR`, and emits a reminder on
+  every model write to run `validate_ros_model` (or `rosmodel_lint.py --server require`).
+  Antigravity has no equivalent auto-run mechanism, so every ported skill that touches a model file
+  — including `ros-model` itself — now says explicitly to run `validate_ros_model` and the linter by
+  hand.
 - **Workflows.** Antigravity has a separate Workflow mechanism (`*.md` files, most resembling
   Claude commands) that is being retired in favor of Skills on 2026-11-01 — so the two
   commands were ported as Skills (above), not Workflows, deliberately.
@@ -191,7 +194,7 @@ reports 19+.
 ```
 .claude-plugin/plugin.json      manifest
 .lsp.json                       ros2 + ros language servers (auto-discovered at plugin root)
-hooks/hooks.json                PostToolUse linter for .ros2 and .rossystem (auto-discovered)
+hooks/hooks.json                PostToolUse kept-rule linter + validate_ros_model reminder (auto-discovered)
 commands/update-ros-catalog.md  slash command: refresh popular-ROS-packages reference (cheap agent)
 commands/ros-plot.md            slash command: render .rossystem models as one interactive HTML file (read-only)
 agents/ros-modeler.md           subagent, preloads the ros-model skill
@@ -344,14 +347,24 @@ model means.
 
 ## What the hook can and cannot do
 
-`hooks/hooks.json` runs the linter on every `Write`/`Edit` of a `.ros`, `.ros2` or `.rossystem`
-file.
+`hooks/hooks.json` runs `rosmodel_lint.py --hook` on every `Write`/`Edit` of a `.ros`, `.ros2` or
+`.rossystem` file. It runs **only** the fast kept rules (style, provenance and generator
+compatibility) and **never** starts the JVM language server (~10 s per invocation), so grammar and
+Xtext validation are not checked on edit.
+
+- When an `ERROR` survives the kept rules, the hook prints `{"decision": "block", "reason": "...",
+  "hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "..."}}` to force a
+  corrective edit.
+- When no `ERROR` is found, it still prints `hookSpecificOutput.additionalContext` reminding the
+  agent that grammar and Xtext validation were not checked and to run `validate_ros_model` (or
+  `rosmodel_lint.py --server require`) before finishing.
 
 `PostToolUse` fires *after* a tool call succeeds, and the capability table reads
 `PostToolUse | No | Shows stderr to Claude; the tool already ran`. **The file is on disk by the time
 the linter runs.** Returning `{"decision": "block", "reason": "..."}` does not undo the write — it
-blocks further processing and forces a corrective edit. The invariant bought is *"no invalid model
-survives the turn"*, not *"no invalid model is ever written"*.
+blocks further processing and forces a corrective edit. The invariant bought is *"no model with a
+kept-rule ERROR survives the turn without a validation reminder"*, not *"no invalid model is ever
+written"*.
 
 Doing better needs `PreToolUse`, which *can* block — but it would have to lint `tool_input.content`
 before the file exists, and for `Edit` it would have to apply the diff itself to know the post-edit

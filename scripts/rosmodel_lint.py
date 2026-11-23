@@ -3118,13 +3118,23 @@ def server_findings(paths, mode="auto", jar=None):
     return findings, info
 
 
+_HOOK_REMINDER = (
+    "rosmodel_lint.py --hook checks kept style, provenance and generator rules only; "
+    "grammar and Xtext validation were not checked (no language server was started). "
+    "Run validate_ros_model (or rosmodel_lint.py --server require) before finishing."
+)
+
+
 def run_hook():
     """PostToolUse hook mode, wired from hooks/hooks.json.
 
     Reads the hook event JSON on stdin, takes the written path from tool_input.file_path,
-    lints it, and prints a blocking decision on stdout when an ERROR survives. Anything else
-    (including a malformed event, an unreadable path, or a non-model extension) exits 0 in
-    silence -- a linter that breaks the agent's turn on its own bad day is worse than no linter.
+    lints it with the fast kept rules only (never starts the language server), and on any
+    model write emits hookSpecificOutput.additionalContext reminding the agent to run
+    validate_ros_model (or rosmodel_lint.py --server require). When an ERROR survives it
+    also emits a blocking decision so a corrective edit is forced. Anything else (including
+    a malformed event, an unreadable path, or a non-model extension) exits 0 in silence --
+    a linter that breaks the agent's turn on its own bad day is worse than no linter.
 
     PostToolUse fires AFTER the write succeeds, so blocking cannot prevent the bad file from
     reaching disk. It forces a corrective edit instead: the invariant bought is "no invalid model
@@ -3146,8 +3156,13 @@ def run_hook():
         print("rosmodel_lint: internal error on %s: %s" % (path, exc), file=sys.stderr)
         return 0
 
+    hook_output = {
+        "hookEventName": "PostToolUse",
+        "additionalContext": _HOOK_REMINDER,
+    }
     errors = [f for f in findings if f.severity == ERROR]
     if not errors:
+        print(json.dumps({"hookSpecificOutput": hook_output}))
         return 0
 
     lines = ["%s: %d error(s) from rosmodel_lint.py -- fix and rewrite the file." % (path, len(errors))]
@@ -3158,7 +3173,11 @@ def run_hook():
     if len(errors) > 20:
         lines.append("  ... and %d more." % (len(errors) - 20))
 
-    print(json.dumps({"decision": "block", "reason": "\n".join(lines)}))
+    print(json.dumps({
+        "decision": "block",
+        "reason": "\n".join(lines),
+        "hookSpecificOutput": hook_output,
+    }))
     return 0
 
 

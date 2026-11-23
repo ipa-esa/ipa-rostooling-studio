@@ -1816,6 +1816,11 @@ def run_linter(files):
     if not os.path.isfile(LINTER):
         return None
     try:
+        # Keep --server off: Phase 1 emits draft .ros2 files that can reference custom message
+        # packages whose companion .ros specs do not sit beside the output (e.g. when --emit-msgs
+        # is omitted or targets another directory). The language server reports those as RM100
+        # unresolved-reference ERRORs that the extractor cannot fix on its own, plus adds a ~10s
+        # JVM startup per run; final validation runs later via validate_ros_model.
         proc = subprocess.run(
             [sys.executable, LINTER, "--json", "--server", "off"] + files,
             capture_output=True, text=True, timeout=180)

@@ -73,9 +73,12 @@ echo '{"tool_input":{"file_path":"x.ros2"}}' | python rosmodel_lint.py --hook
 ```
 
 Reads the PostToolUse event JSON on stdin, takes the written path from `tool_input.file_path`,
-and prints `{"decision": "block", "reason": "..."}` on stdout when an **ERROR** survives. Clean
-files, non-model extensions, malformed events and internal errors all exit **0 in silence** — a
-linter that breaks the agent's turn on its own bad day is worse than no linter.
+lints it with the kept rules only (never starts a JVM), and emits `hookSpecificOutput.additionalContext`
+on every model write (`.ros`, `.ros2`, `.rossystem`) reminding the agent that grammar and Xtext
+validation were not checked and to run `validate_ros_model` (or `rosmodel_lint.py --server require`).
+When an **ERROR** survives it also sets `"decision": "block"` and `"reason"`. Non-model extensions,
+malformed events and internal errors all exit **0 in silence** — a linter that breaks the agent's
+turn on its own bad day is worse than no linter.
 
 `PostToolUse` fires *after* the write succeeds, so blocking cannot prevent a bad file reaching
 disk; it forces a corrective edit. The invariant is *"no invalid model survives the turn"*, not

@@ -993,6 +993,11 @@ def run_linter(files):
     if not os.path.isfile(LINTER):
         return None
     try:
+        # Keep --server off: Phase 2 writes a single draft .rossystem referencing .ros2 node
+        # models held in --models (a sibling or separate directory that is not passed beside
+        # args.out). Asking the language server about the .rossystem alone reports every from:/port
+        # target as an unresolved RM100 ERROR that the extractor cannot fix, plus adds a ~10s JVM
+        # startup per run; final validation runs later via validate_ros_model.
         proc = subprocess.run([sys.executable, LINTER, "--json", "--server", "off"] + files,
                               capture_output=True, text=True, timeout=180)
         return json.loads(proc.stdout or "{}")

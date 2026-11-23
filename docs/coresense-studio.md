@@ -252,8 +252,8 @@ Inside a project there are two workspaces:
 The check button runs up to three things in order, and stops early if an earlier one fails:
 
 1. **Model generation gate** (`ros_studio.validate_project`) — can this project be emitted at all?
-2. **ROS model linter** (`rosmodel_lint`) — the 81 static rules, run over the freshly generated
-   files in a scratch directory.
+2. **ROS model linter** (`rosmodel_lint`) — the fast style, provenance and generator-compatibility
+   rules, run over the freshly generated files in a scratch directory.
 3. **Language server oracle** (`ask_oracle`) — the real RosTooling language servers, only if a
    usable Java runtime is found. A cheap preflight checks the Java version first, so a missing or
    too-old JRE is reported in milliseconds with the actual reason instead of surfacing as a
