@@ -4171,6 +4171,76 @@ def format_text(findings, files_checked, max_per_rule=10):
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------------------
+# The real language server (RM100 / RM101)
+# --------------------------------------------------------------------------------------
+
+SERVER_MODES = ("auto", "require", "off")
+SERVER_EXTENSIONS = (".ros", ".ros2", ".rossystem")
+_ros_server_cache = {"loaded": False, "value": None}
+
+
+def _ros_server_module():
+    """scripts/ros_server.py, loaded BY PATH so this works however the linter was started."""
+    if not _ros_server_cache["loaded"]:
+        _ros_server_cache["loaded"] = True
+        try:
+            import importlib.util
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ros_server.py")
+            spec = importlib.util.spec_from_file_location("_rosmodel_ros_server", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _ros_server_cache["value"] = module
+        except Exception:
+            _ros_server_cache["value"] = None
+    return _ros_server_cache["value"]
+
+
+def server_findings(paths, mode="auto", jar=None):
+    """Findings from the RosTooling language server for `paths`, asked once for all of them.
+
+    Every server diagnostic becomes an RM100 finding with the server's own message and severity.
+    When the server is not asked (mode 'off') or cannot answer, each file gets one RM101 finding
+    saying its grammar and validation were not checked -- INFO for 'off', WARNING for 'auto',
+    ERROR for 'require' -- so a run without the server never reads as a clean bill of health.
+    Returns (findings, info) where info is {"mode", "status", "reason", "jar"}."""
+    files = [p for p in paths if os.path.splitext(p)[1] in SERVER_EXTENSIONS]
+    info = {"mode": mode, "status": "OFF", "reason": "--server off", "jar": None}
+
+    def not_checked(severity, reason):
+        return [Finding(p, 0, severity, "RM101",
+                        "Grammar and validation were not checked by the language server: %s." % reason,
+                        "Run validate_ros_model (rostooling-mcp) on this file, or lint with "
+                        "--server auto once Java and the server jar are available "
+                        "(ROSMODEL_JAVA, ROSMODEL_JAR).") for p in files]
+
+    if not files:
+        info.update(status="NO_FILES", reason="no .ros, .ros2 or .rossystem file")
+        return [], info
+    if mode == "off":
+        return not_checked(INFO, "--server off"), info
+    module = _ros_server_module()
+    if module is None:
+        result = {"status": "UNAVAILABLE", "reason": "scripts/ros_server.py could not be loaded"}
+    else:
+        try:
+            result = module.validate_files(files, jar_override=jar)
+        except Exception as exc:                       # a broken server is not a verdict
+            result = {"status": "FAILED", "reason": "the language server failed: %s" % exc}
+    info.update(status=result.get("status"), reason=result.get("reason", ""), jar=result.get("jar"))
+    if result.get("status") != "OK":
+        return not_checked(ERROR if mode == "require" else WARNING, info["reason"].splitlines()[0]), info
+
+    by_path = result.get("diagnostics", {})
+    findings = []
+    for p in files:
+        for d in by_path.get(os.path.realpath(p), []):
+            severity = {"ERROR": ERROR, "WARNING": WARNING}.get(d.get("severity"), INFO)
+            findings.append(Finding(p, d.get("line", 0), severity, "RM100", d.get("message", ""),
+                                    "Reported by the RosTooling language server (%s)." % info["jar"]))
+    return findings, info
+
+
 def run_hook():
     """PostToolUse hook mode, wired from hooks/hooks.json.
 
@@ -4236,6 +4306,14 @@ def main(argv=None):
     parser.add_argument("--max-per-rule", type=int, default=10, metavar="N",
                         help="In text output, show at most N findings per rule per file "
                              "(0 = unlimited, default 10). JSON output is never capped.")
+    parser.add_argument("--server", choices=SERVER_MODES, default="auto",
+                        help="Also ask the RosTooling language server (one JVM for all files; "
+                             "its findings are RM100). auto: when Java and the server jar are "
+                             "available, else one RM101 WARNING per file; require: RM101 is an "
+                             "ERROR; off: never ask, RM101 INFO. Default: auto.")
+    parser.add_argument("--server-jar", metavar="JAR",
+                        help="Language server jar to use (default: ROSMODEL_JAR, else discovered; "
+                             "see scripts/ros_server.py).")
     parser.add_argument("--no-catalogue", action="store_true",
                         help="Disable RM081-092 (assets/type_index.json + "
                              "assets/node_index.json lookups). Use for workspaces whose "
@@ -4262,6 +4340,8 @@ def main(argv=None):
     all_findings = []
     for path in paths:
         all_findings.extend(Linter(path, use_catalogue=not args.no_catalogue).run())
+    from_server, server_info = server_findings(paths, args.server, jar=args.server_jar)
+    all_findings.extend(from_server)
 
     shown = [f for f in all_findings if SEVERITY_ORDER.get(f.severity, 9) <= threshold]
 
@@ -4273,6 +4353,7 @@ def main(argv=None):
         payload = {
             "files_checked": paths,
             "pyyaml_available": HAVE_YAML,
+            "server": server_info,
             "summary": {"files": len(paths), "errors": errors,
                         "warnings": warnings, "infos": infos},
             "findings": [f.as_dict() for f in sorted(shown, key=lambda f: f.sort_key())],
@@ -4283,6 +4364,9 @@ def main(argv=None):
             print(format_text(shown, paths, max_per_rule=args.max_per_rule))
         print("%d file(s): %d error(s), %d warning(s), %d info(s)"
               % (len(paths), errors, warnings, infos))
+        print("language server: %s" % (
+            "asked (%s)" % server_info["jar"] if server_info["status"] == "OK"
+            else "not asked (%s)" % (server_info["reason"].splitlines() or [server_info["status"]])[0]))
 
     return 1 if errors else 0
 

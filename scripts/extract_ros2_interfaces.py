@@ -1817,7 +1817,7 @@ def run_linter(files):
         return None
     try:
         proc = subprocess.run(
-            [sys.executable, LINTER, "--json"] + files,
+            [sys.executable, LINTER, "--json", "--server", "off"] + files,
             capture_output=True, text=True, timeout=180)
         return json.loads(proc.stdout or "{}")
     except Exception as exc:

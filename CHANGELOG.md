@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Agent skills** (`ros-model`, `ros-modeler`, `ros-system-builder`, `ros-node-developer`) describe the new plugin syntax and the `ros2_add_plugin_base` and `ros_attach_plugins` MCP tools.
 
 ### Added
+- **`rosmodel_lint.py --server {auto,require,off}`** (default `auto`): asks the real RosTooling language server once per run and reports its diagnostics as `RM100`; a run that did not ask it says so with `RM101` (INFO, WARNING or ERROR by mode). The Java/jar discovery and LSP client moved from `tests/oracle/ask_oracle.py` to `scripts/ros_server.py`, which the oracle CLI now wraps. The hook and the extractors pass `--server off`.
+- `tests/fixtures/server_coverage/`: one case per linter rule that copies a grammar or validator rule, with the language server's finding for each.
 - `tests/fixtures/plugins_phase4/`: 27 plugin-syntax cases with the language server's verdicts; a test holds the linter to the same verdicts.
 
 ## [0.3.0] - 2026-11-18

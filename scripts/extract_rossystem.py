@@ -993,7 +993,7 @@ def run_linter(files):
     if not os.path.isfile(LINTER):
         return None
     try:
-        proc = subprocess.run([sys.executable, LINTER, "--json"] + files,
+        proc = subprocess.run([sys.executable, LINTER, "--json", "--server", "off"] + files,
                               capture_output=True, text=True, timeout=180)
         return json.loads(proc.stdout or "{}")
     except Exception as exc:

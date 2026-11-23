@@ -62,7 +62,9 @@ Globs are expanded internally, so quoted `**` patterns work regardless of shell.
 | `--min-severity {ERROR,WARNING,INFO}` | Suppress findings below this level. Default `INFO`. |
 | `--max-per-rule N` | Text output only: at most `N` findings per rule per file (`0` = unlimited). Default `10`. |
 | `--quiet` | Print only the summary line. |
-| `--hook` | PostToolUse hook mode — see below. |
+| `--server {auto,require,off}` | Also ask the real RosTooling language server, once for all files (see *Language server*). Default `auto`. |
+| `--server-jar JAR` | Language server jar for `--server` (default: `ROSMODEL_JAR`, else discovered by `ros_server.py`). |
+| `--hook` | PostToolUse hook mode — see below. It never asks the language server. |
 
 ### `--hook` mode
 
@@ -283,6 +285,23 @@ accepts both `'` and `"`, so the difference vanishes at parse time.
 | `pub->` | `sub->` |
 | `ss->` | `sc->` |
 | `as->` | `ac->` |
+
+### Language server (added 2026-11-23)
+
+`--server` asks the real RosTooling language server about the linted `.ros`, `.ros2` and
+`.rossystem` files, through `ros_server.py` (shared with `tests/oracle/ask_oracle.py`): one JVM
+for the whole run, the files' folders as workspace folders, the catalogue from
+`ROSMODEL_CATALOGUE_DIR` or `~/.rostooling/catalogue_repos`. A JVM start costs about 10 s, so the
+hook and the extractors pass `--server off`.
+
+| ID | Severity | Check | Mirrors |
+|---|---|---|---|
+| `RM100` | the server's | A diagnostic of the language server, with its own message and line | the server itself |
+| `RM101` | INFO (`off`), WARNING (`auto`), ERROR (`require`) | One per file when the server was not asked or could not answer: grammar and validation were not checked. Run `validate_ros_model`, or set `ROSMODEL_JAVA` / `ROSMODEL_JAR` | — |
+
+The jar is discovered in this order: `ROSMODEL_JAR` (or `--server-jar`), the studio settings, an
+installed RosTooling extension, a sibling `RosTooling_Extension` checkout, the local build. An
+installed extension can be older than the models; point `ROSMODEL_JAR` at the jar that matches.
 
 ### Catalogue checks (added 2026-07-23)
 
@@ -649,10 +668,10 @@ the script appears in this README and vice versa, with no orphans in either dire
 
 ### Whole-corpus run — 336 files, 0 crashes
 
-**Re-measured 2026-08-14** against the current script. It emits **88** distinct ids -- RM000-RM098
-plus the `RM002B` and `RM008T` variants -- which is **87 rules**<!--@count:rules-->, RM000 being the internal
-read/parse failure rather than a rule. (RM047 and RM048, the Phase 4 plugin rules, were added
-2026-11-23 and took no part in this sweep.) (RM094, the column-0 comment check, and the RM090/RM033
+**Re-measured 2026-08-14** against the current script. It emits **90** distinct ids -- RM000-RM101
+plus the `RM002B` and `RM008T` variants -- which is **89 rules**<!--@count:rules-->, RM000 being the internal
+read/parse failure rather than a rule. (RM047 and RM048, the Phase 4 plugin rules, and RM100 and
+RM101, the language-server findings, were added 2026-11-23 and took no part in this sweep.) (RM094, the column-0 comment check, and the RM090/RM033
 severity corrections landed after this sweep and change none of its counts: no corpus file
 exhibits any of the three.) This supersedes the
 counts the three amendments above call stale, and adds the `.ros` corpus, which the old 305-file

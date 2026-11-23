@@ -141,7 +141,8 @@ def test_shared_catalogue_overlay_and_custom_folders(tmp_path, monkeypatch):
     assert errors_or_warns == []
 
 
-def test_ask_oracle_passes_catalogue_jvm_property(tmp_path, monkeypatch):
+def test_language_server_gets_catalogue_jvm_property(tmp_path, monkeypatch):
+    """The server driver shared by ask_oracle.py and rosmodel_lint.py --server (scripts/ros_server.py)."""
     import importlib.util
 
     cat_dir = tmp_path / "cat_override"
@@ -152,10 +153,10 @@ def test_ask_oracle_passes_catalogue_jvm_property(tmp_path, monkeypatch):
     monkeypatch.setenv("ROSMODEL_CATALOGUE_DIR", str(cat_dir))
 
     spec = importlib.util.spec_from_file_location(
-        "_ask_oracle_test", str(ROOT / "tests" / "oracle" / "ask_oracle.py")
+        "_ros_server_test", str(ROOT / "scripts" / "ros_server.py")
     )
-    ask_oracle = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ask_oracle)
+    ros_server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ros_server)
 
     captured = {}
 
@@ -172,8 +173,8 @@ def test_ask_oracle_passes_catalogue_jvm_property(tmp_path, monkeypatch):
         captured["cmd"] = cmd
         return DummyProc()
 
-    with mock.patch.object(ask_oracle.subprocess, "Popen", side_effect=fake_popen):
-        ask_oracle.Server(tmp_path, jar=fake_jar)
+    with mock.patch.object(ros_server.subprocess, "Popen", side_effect=fake_popen):
+        ros_server.Server(tmp_path, jar=fake_jar)
 
     assert f"-Drostooling.catalogue.path={cat_dir.resolve()}" in captured["cmd"]
 
