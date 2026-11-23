@@ -1,5 +1,5 @@
 {
-  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8, no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/*",
+  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8 (RM053 and RM058 rechecked with df327891, which adds the duplicate-interface-name check), no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/*",
   "cases": {
     "RM010": {
       "file": "probe_pkg.ros2",
@@ -109,7 +109,8 @@
     "RM053": {
       "file": "probe_sys.rossystem",
       "server": null,
-      "server_message": null
+      "server_message": null,
+      "note": "The model is valid: without fromFile: the generator writes the bringup package itself. The validator crash the rule warned about was fixed in RosTooling df327891, so the rule has nothing left to report."
     },
     "RM054": {
       "file": "probe_sys.rossystem",
@@ -123,8 +124,8 @@
     },
     "RM058": {
       "file": "probe_sys.rossystem",
-      "server": null,
-      "server_message": null
+      "server": "ERROR",
+      "server_message": "Node 'talker' declares the interface name 'chatter_pub' more than once; connections refer to interfaces by name, so give each one its own"
     },
     "RM060": {
       "file": "probe_sys.rossystem",
