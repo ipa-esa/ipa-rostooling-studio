@@ -242,12 +242,13 @@ The `rostooling-mcp` server exposes coordinate-free, semantic editing tools for 
 | Tool | Does | Key arguments |
 |---|---|---|
 | `ros2_add_artifact` | adds an artifact/node contract; **creates the `.ros2` file if it does not exist** | `package_path`, `artifact_name`, optional `node_name`, `package_name`, `from_git_repo`, `lifecycle`, `is_library` |
-| `ros2_add_plugin` | adds a `pluginlib` or `external` plugin to an artifact | `package_path`, `artifact_name`, `plugin_name`, optional `implements`, `loader` (`pluginlib`/`external`) |
-| `ros2_add_plugin_slot` | declares a host node `pluginslots:` entry | `package_path`, `artifact`, `name`, `base`, `parameter`, optional `format` (`class`/`library`), `default_plugin` |
+| `ros2_add_plugin_base` | declares a plugin base under `pluginbases:` | `package_path`, `name`, `class` (`"pkg::Base"`), `header`, optional `loader` (default `pluginlib`), `package_name` |
+| `ros2_add_plugin` | adds a plugin to a plugin library artifact (created if missing; never one that holds a node) | `package_path`, `artifact_name`, `plugin_name`, `implements` (`<package>.<Base>`), optional `package_name`, `from_git_repo` |
+| `ros2_add_plugin_slot` | declares a host node `pluginslots:` entry; the slot declares its parameter | `package_path`, `artifact`, `name`, `base` (`<package>.<Base>`), `parameter`, optional `format` (`class`/`library`), `multiple`, `default_plugin` (`<package>.<Plugin>`) |
 | `ros2_add_interface` | adds a publisher, subscriber, service server/client, or action server/client to a node | `package_path`, `artifact`, `kind` (`pub`/`sub`/`ss`/`sc`/`as`/`ac`), `name`, `type`, optional `namespace`, `active_in`, `qos` |
 | `ros2_add_parameter` | adds a typed parameter declaration (with optional `default_value` / `value` / `namespace`) | `package_path`, `artifact`, `name`, `type` (`String`/`Integer`/`Double`/`Boolean`/`Base64`/`Array`), optional `default_value`, `value`, `namespace` |
 | `ros2_set_qos` | sets or clears QoS profile and policy fields on an existing interface | `package_path`, `artifact`, `interface_name`, optional QoS fields |
-| `ros2_set_property` | updates a property on `"root"`, `<artifact>`, `<artifact>.<interface>`, or `<artifact>.<param>` | `package_path`, `target`, `property` (`type`, `default`, `value`, `isLifecycle`, `fromGitRepo`, `namespace`, `activeStates`, `name`), `value` |
+| `ros2_set_property` | updates a property on `"root"`, `<artifact>`, `<artifact>.<interface>`, `<artifact>.<param>`, a plugin base `<Base>` (`name`, `class`, `header`, `loader`), a plugin `<Plugin>` (`implements`), or a slot `<artifact>.<slot>` (`base`, `parameter`, `format`, `multiple`, `default`) | `package_path`, `target`, `property` (`type`, `default`, `value`, `isLifecycle`, `fromGitRepo`, `namespace`, `activeStates`, `name`, ...), `value` |
 | `ros2_remove_element` | removes an artifact, `<artifact>.<interface>`, `<artifact>.<param>`, spec, or spec field | `package_path`, `element` |
 | `ros_list_plugins` | lists active third-party `RosToolingPlugin` providers, `@<block>:` schemas, tools, and doc URIs | optional `workspace_dir` |
 | `ros_get_extension_block` | reads an `@<block>:` extension block from a `.ros2` or `.rossystem` target element (with optional `merged: true`) | `model_path`, `block_name`, optional `target_kind`, `target_name`, `merged` |
@@ -258,7 +259,8 @@ The `rostooling-mcp` server exposes coordinate-free, semantic editing tools for 
 
 | Tool | Does | Key arguments |
 |---|---|---|
-| `ros_add_node` | adds a node instance; **creates the `.rossystem` if it does not exist** | `system_path`, `node_name`, `from` = `"<package>.<node>"` (§4b), optional `namespace`, `system_name`, `from_file` |
+| `ros_add_node` | adds a node instance; **creates the `.rossystem` if it does not exist**; returns the node's plugin slots | `system_path`, `node_name`, `from` = `"<package>.<node>"` (§4b), optional `namespace`, `plugins` (each goes into the first slot of its base), `system_name`, `from_file` |
+| `ros_attach_plugins` | sets the plugins of one slot of a node instance, replacing its list; an empty list detaches them | `system_path`, `node`, `slot`, `plugins` (`<package>.<Plugin>`[]) |
 | `ros_add_subsystem` | adds a `subSystems:` entry referencing another `.rossystem` in the workspace | `system_path`, `subsystem_name`, optional `system_name`, `from_file` |
 | `ros_set_system_property` | sets a top-level system property (`name` or `fromFile`) | `system_path`, `property` (`name`/`fromFile`), `value` |
 | `ros_auto_connect` | **wires the system**: proposes every connection the server can verify (complementary kind, identical resolved type, also into subsystems), ranked per receiving port; dry run by default, then adds the chosen ones in one edit | `system_path`, optional `nodes` (focus), `apply`, `connections` (candidate ids) |
@@ -832,13 +834,14 @@ be the reader's only signal that nothing needed it.
 
 | Rule | Mandatory order |
 |---|---|
-| `AmentPackage` | `fromGitRepo:` → `artifacts:` → `dependencies:` |
-| `.ros2` artifact | `node:` (optional if `plugins:` is present) and/or `plugins:` (`implements:` required for `pluginlib` or for any plugin attached to a `.rossystem` host slot) |
-| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` (`base:`, `parameter:`, optional `format: class \| library`, `default:`) → trailing `@<extension>:` blocks |
-| `.ros2` plugin | `implements:` / `loader:` / interface & parameter blocks → trailing `@<extension>:` blocks |
+| `AmentPackage` | `fromGitRepo:` → (`pluginbases:` and `artifacts:`, either order) → `dependencies:` |
+| `.ros2` plugin base | `class:` (quoted `"pkg::Base"`), `header:`, `loader:` — all three required, any order |
+| `.ros2` artifact | `node:` **or** `plugins:` — never both; a plugins artifact holds nothing else |
+| `.ros2` node | `node:` → `lifecycle:` (optional) → interface/parameter/`pluginslots:` (`base: <package>.<Base>`, `parameter:` — not also a node parameter — optional `format: class \| library`, `multiple: true \| false`, `default: <package>.<Plugin>`; any order, except the inline `{ ... }` form, which takes them in that order) → trailing `@<extension>:` blocks |
+| `.ros2` plugin | `implements: <package>.<Base>` **first** → interface & parameter blocks → trailing `@<extension>:` blocks (no `loader:`; it comes from the base) |
 | `.ros2` interface | `type:` → `ns:` → `active_in:` → `qos:` (`active_in:` only valid on lifecycle nodes) |
 | `.ros2` parameter | `type:` → **`default:`** → `ns:` → `value:` → `qos:` |
-| `.rossystem` node | `from:` → `namespace:` → `plugins:` → `interfaces:` → `parameters:` → trailing `@<extension>:` blocks (also permitted on `System` and indented under `- <iface>: ...` `RosInterface` entries) |
+| `.rossystem` node | `from:` → `namespace:` → `slots:` (`<slot>: [<package>.<Plugin>, ...]`; `[ ]` for none, not `[]`) → `interfaces:` → `parameters:` → trailing `@<extension>:` blocks (also permitted on `System` and indented under `- <iface>: ...` `RosInterface` entries) |
 | `.rossystem` **system-level** parameter | `ns:` → `type:` → `default:` → `value:` (no `qos:`) |
 
 Inside `@<extension>:` blocks, cross-references to declared interfaces or parameters use `pub->`, `sub->`, `ss->`, `sc->`, `as->`, `ac->`, or `param->`.
@@ -1058,8 +1061,8 @@ The `rostooling-mcp` Model Context Protocol server (`rostooling-languages` binar
 Java/Xtext server headlessly — no VS Code needed:
 
 - **Semantic `.ros` / `.ros2` / `.rossystem` authoring** — `ros_add_spec`, `ros2_add_artifact`,
-  `ros2_add_plugin`, `ros2_add_plugin_slot`, `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`,
-  `ros2_remove_element`, `ros_add_node`, `ros_add_subsystem`, `ros_set_system_property`,
+  `ros2_add_plugin_base`, `ros2_add_plugin`, `ros2_add_plugin_slot`, `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`,
+  `ros2_remove_element`, `ros_add_node`, `ros_attach_plugins`, `ros_add_subsystem`, `ros_set_system_property`,
   `ros_connect_interfaces`, `ros_set_parameter`, `ros_add_process`, `ros_remove_element`,
   `export_system_diagram` (see *Building `.ros`, `.ros2`, and `.rossystem` models with the semantic MCP tools*).
 - **`validate_ros_model`** — validates syntax, cross-file `type:` / `from:` references, arrow

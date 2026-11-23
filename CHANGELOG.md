@@ -5,6 +5,20 @@ All notable changes to the **ipa-rostooling-studio** toolchain and skills will b
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Phase 4 plugin syntax in `rosmodel_lint.py`** (breaking for models in the old syntax, which the language server no longer parses either):
+  - Packages may declare `pluginbases:` (`class:`, `header:`, `loader:`, all required); a plugin starts with `implements: <package>.<Base>` and has no `loader:`; an artifact holds `node:` or `plugins:`, never both.
+  - A pluginslot declares its own parameter, which must no longer also appear under the node's `parameters:` (the old rule required the opposite); slots take `multiple:` and reference bases and default plugins as `<package>.<Name>`.
+  - A `.rossystem` node attaches plugins per slot under `slots:` instead of `plugins: [...]`; member order there and in an AmentPackage is now an error, since the grammar fixes it.
+  - New rules `RM047` (loader other than `pluginlib`, WARNING) and `RM048` (plugin and slot consistency, ERROR).
+- **`ros_plot.py`** reads `slots:` and shows each node's plugins per slot.
+- **Agent skills** (`ros-model`, `ros-modeler`, `ros-system-builder`, `ros-node-developer`) describe the new plugin syntax and the `ros2_add_plugin_base` and `ros_attach_plugins` MCP tools.
+
+### Added
+- `tests/fixtures/plugins_phase4/`: 27 plugin-syntax cases with the language server's verdicts; a test holds the linter to the same verdicts.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added

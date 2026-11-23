@@ -561,6 +561,53 @@ def load_local_nodes(base_dir):
     return _local_nodes_cache[key]
 
 
+_local_plugin_model_cache = {}
+
+
+def load_local_plugin_model(base_dir):
+    """The plugin side of the .ros2 files NEXT TO the linted file (same scope as
+    load_local_nodes): {'hosts': {'pkg.node': {slot: {'base': ref, 'multiple': bool}}},
+    'plugins': {'pkg.Plugin': base ref}}. Slot attachments in a .rossystem are checked against it
+    when the host node is project-local; hosts from the catalogue are left to the validator."""
+    key = os.path.abspath(base_dir or ".")
+    if key in _local_plugin_model_cache:
+        return _local_plugin_model_cache[key]
+    model = {"hosts": {}, "plugins": {}}
+    bni = _build_node_index_module()
+    if bni is not None and HAVE_YAML:
+        for path in sorted(glob.glob(os.path.join(key, "*.ros2"))):
+            try:
+                root = bni.compose_yaml(path)
+            except Exception:
+                continue
+            for pkg_key, pkg_val in mapping_items(root):
+                if not is_scalar(pkg_key):
+                    continue
+                for _akey, aval in mapping_items(mapping_get(pkg_val, "artifacts")):
+                    if not is_mapping(aval):
+                        continue
+                    for pkey, pval in mapping_items(mapping_get(aval, "plugins")):
+                        impl = mapping_get(pval, "implements") if is_mapping(pval) else None
+                        if is_scalar(pkey):
+                            model["plugins"]["%s.%s" % (pkg_key.value, pkey.value)] = (
+                                impl.value.strip() if is_scalar(impl) else None)
+                    node_name = mapping_get(aval, "node")
+                    if not is_scalar(node_name):
+                        continue
+                    slots = {}
+                    for skey, sval in mapping_items(mapping_get(aval, "pluginslots")):
+                        if is_scalar(skey) and is_mapping(sval):
+                            base = mapping_get(sval, "base")
+                            multiple = mapping_get(sval, "multiple")
+                            slots[skey.value] = {
+                                "base": base.value.strip() if is_scalar(base) else None,
+                                "multiple": is_scalar(multiple) and multiple.value == "true",
+                            }
+                    model["hosts"]["%s.%s" % (pkg_key.value, node_name.value)] = slots
+    _local_plugin_model_cache[key] = model
+    return model
+
+
 def load_local_system(base_dir, ref):
     """A `subSystems:` reference resolved against a .rossystem sitting NEXT TO the file being
     linted, in the same record shape load_system_index() returns (plus "local": True).
@@ -666,14 +713,30 @@ ROS2_PLUGIN_BLOCKS = [
     "parameters",
 ]
 
-# Ros.xtext:178 PluginSlotValueFormat enum
+# Ros.xtext:175 PluginSlotValueFormat enum
 VALID_PLUGINSLOT_FORMATS = ("class", "library")
+
+# Ros.xtext:227-244 PluginSlot members. The block form takes them in any order; the inline
+# { ... } form takes them in exactly this order.
+PLUGINSLOT_KEYS = ["base", "parameter", "format", "multiple", "default"]
+
+# Ros2.xtext:34-41 PluginBase members, all three required, any order.
+PLUGINBASE_KEYS = ["class", "header", "loader"]
+
+# The one loader core knows itself; any other id must be registered by an enabled language
+# plugin (RosValidator.checkPluginBaseLoader), which a linter cannot see.
+PLUGINLIB = "pluginlib"
+
+# Basics.xtext:410 QualifiedRef: <package>.<Name> (or more segments), quoted or not.
+RE_QUALIFIED_REF = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)+$")
 
 # Ros2.xtext:69-74 LifecycleState enum
 LIFECYCLE_STATES = ("Unconfigured", "Inactive", "Active", "Finalized")
 
-# Ros2.xtext AmentPackage members, in grammar-fixed order (rule 21).
-AMENT_PACKAGE_KEYS = ["fromGitRepo", "artifacts", "dependencies"]
+# Ros2.xtext AmentPackage members (rule 21): fromGitRepo first, dependencies last, and
+# pluginbases / artifacts in either order between them (an unordered group, Ros2.xtext:18-27).
+AMENT_PACKAGE_KEYS = ["fromGitRepo", "pluginbases", "artifacts", "dependencies"]
+AMENT_PACKAGE_RANK = {"fromGitRepo": 0, "pluginbases": 1, "artifacts": 1, "dependencies": 2}
 
 # grammar-subset.md sec 5.2: present in the token file but UNREACHABLE from AmentPackage.
 ROS2_FORBIDDEN_SPEC_BLOCKS = ["msgs", "srvs", "actions"]
@@ -728,8 +791,9 @@ KNOWN_LAUNCH_SUBSTITUTIONS = {
     "not", "not-equals", "or", "param", "var",
 }
 
-# RosSystem.xtext:60-75 -- fixed member order for a RosNode (rule 22).
-ROSSYSTEM_NODE_KEYS = ["from", "namespace", "plugins", "interfaces", "parameters"]
+# RosSystem.xtext:61-81 -- fixed member order for a RosNode (rule 22). It is a sequence in the
+# grammar, so another order does not parse.
+ROSSYSTEM_NODE_KEYS = ["from", "namespace", "slots", "interfaces", "parameters"]
 
 # checkPortPatterns (S4): the only three legal from->to pairings.
 ARROW_FROM_TO = {"pub": "sub", "ss": "sc", "as": "ac"}
@@ -2236,6 +2300,7 @@ class Linter(object):
             return
 
         self.check_duplicate_keys(pkg_val, "package '%s'" % pkg_key.value)
+        self.collect_local_plugin_model(pkg_key.value, pkg_val)
 
         present = []
         for key, val in mapping_items(pkg_val):
@@ -2254,6 +2319,8 @@ class Linter(object):
                            "a .ros file.")
             elif name == "artifacts":
                 self.check_ros2_artifacts(val)
+            elif name == "pluginbases":
+                self.check_ros2_pluginbases(val)
             elif name == "dependencies":
                 self.warn(line, "RM044",
                           "'dependencies:' has zero corpus support.",
@@ -2269,13 +2336,126 @@ class Linter(object):
             elif name not in AMENT_PACKAGE_KEYS:
                 self.error(line, "RM037",
                            "Unknown key '%s:' at package level." % name,
-                           "AmentPackage admits only fromGitRepo:, artifacts:, dependencies: "
-                           "(Ros2.xtext:13-24).")
+                           "AmentPackage admits only fromGitRepo:, pluginbases:, artifacts:, "
+                           "dependencies: (Ros2.xtext:13-28).")
 
-        self.check_ordering(present, AMENT_PACKAGE_KEYS, node_line(pkg_key), "RM039",
-                            "AmentPackage member",
-                            "Ros2.xtext:13-24 is a fixed sequence, not an alternation, so this "
-                            "order is mandatory (emission-profile rule 21).")
+        ranked = [k for k in present if k in AMENT_PACKAGE_RANK]
+        if ranked != sorted(ranked, key=AMENT_PACKAGE_RANK.get):
+            self.error(node_line(pkg_key), "RM039",
+                       "AmentPackage member order is %s; fromGitRepo: comes first and "
+                       "dependencies: last." % " -> ".join(ranked),
+                       "Ros2.xtext:13-28 is a sequence (pluginbases: and artifacts: may swap), "
+                       "so another order does not parse (emission-profile rule 21).")
+
+    # -- Phase 4 plugin model: bases, plugins, slots -------------------------------------
+
+    def collect_local_plugin_model(self, pkg_name, pkg_val):
+        """Bases and plugins this package declares, so references into the SAME package can be
+        resolved like the linker would: <package>.<Base> -> loader, <package>.<Plugin> -> the
+        base it implements. References into other packages are left to the validator."""
+        self.local_pkg = pkg_name
+        self.local_bases = {}
+        self.local_plugins = {}
+        bases = mapping_get(pkg_val, "pluginbases")
+        for bkey, bval in mapping_items(bases):
+            if is_scalar(bkey):
+                loader = mapping_get(bval, "loader") if is_mapping(bval) else None
+                self.local_bases[bkey.value] = loader.value if is_scalar(loader) else None
+        for _akey, aval in mapping_items(mapping_get(pkg_val, "artifacts")):
+            for pkey, pval in mapping_items(mapping_get(aval, "plugins") if is_mapping(aval) else None):
+                if is_scalar(pkey):
+                    impl = mapping_get(pval, "implements") if is_mapping(pval) else None
+                    self.local_plugins[pkey.value] = impl.value.strip() if is_scalar(impl) else None
+
+    def check_qualified_ref(self, node, what, target):
+        """A [PluginBase|QualifiedRef] or [Plugin|QualifiedRef] value: '<package>.<Name>'. Returns
+        the reference, or None when it cannot be a valid one (and says why)."""
+        if not is_scalar(node):
+            self.error(node_line(node) if node is not None else 0, "RM033",
+                       "%s must be a single '<package>.<%s>' reference." % (what, target), "")
+            return None
+        ref = node.value.strip()
+        if "::" in ref:
+            self.error(node_line(node), "RM033",
+                       "%s '%s' is a C++ class, not a reference to a %s." % (what, ref, target.lower()),
+                       "Since Phase 4 this names a declared plugin %s as <package>.<%s> "
+                       "(Basics.xtext QualifiedRef); the C++ class goes in the base's 'class:' "
+                       "under 'pluginbases:'. Otherwise: \"Couldn't resolve reference to %s\"."
+                       % (target.lower(), target, "PluginBase" if target == "Base" else "Plugin"))
+            return None
+        if not RE_QUALIFIED_REF.match(ref):
+            self.error(node_line(node), "RM033",
+                       "%s '%s' is not a '<package>.<%s>' reference." % (what, ref, target),
+                       "References to plugin bases and plugins are qualified by the declaring "
+                       "package's name (Basics.xtext QualifiedRef).")
+            return None
+        return ref
+
+    def resolvable_base_ref(self, ref):
+        """True when ref is a well-formed base reference that is not already reported as
+        unresolved in this package (so a wrong 'implements:' is reported once, not again at
+        every slot whose default names that plugin)."""
+        if not ref or not RE_QUALIFIED_REF.match(ref):
+            return False
+        name = self.local_ref_name(ref)
+        return name is None or name in getattr(self, "local_bases", {})
+
+    def local_ref_name(self, ref):
+        """'Name' when ref points into this package, else None."""
+        pkg, _, name = ref.rpartition(".")
+        return name if pkg == getattr(self, "local_pkg", None) else None
+
+    def check_ros2_pluginbases(self, node):
+        if not is_mapping(node):
+            self.error(node_line(node) if node is not None else 0, "RM036",
+                       "'pluginbases:' must be a mapping of <Base>: { class, header, loader }.", "")
+            return
+        self.check_duplicate_keys(node, "'pluginbases:' block")
+        for bkey, bval in mapping_items(node):
+            if not is_scalar(bkey):
+                continue
+            if not is_mapping(bval):
+                self.error(node_line(bkey), "RM036",
+                           "Plugin base '%s' body must be a mapping." % bkey.value,
+                           "Ros2.xtext:34-41 -- declare 'class:', 'header:' and 'loader:'.")
+                continue
+            self.check_duplicate_keys(bval, "plugin base '%s'" % bkey.value)
+            for k, _ in mapping_items(bval):
+                if is_scalar(k) and k.value not in PLUGINBASE_KEYS:
+                    self.error(node_line(k), "RM036",
+                               "Unknown key '%s:' in plugin base '%s'." % (k.value, bkey.value),
+                               "A PluginBase admits only: %s." % ", ".join(PLUGINBASE_KEYS))
+            for req in PLUGINBASE_KEYS:
+                if mapping_get(bval, req) is None:
+                    self.error(node_line(bkey), "RM038",
+                               "Plugin base '%s' is missing '%s:'." % (bkey.value, req),
+                               "Ros2.xtext:34-41 -- class:, header: and loader: are all required.")
+            cls = mapping_get(bval, "class")
+            if is_scalar(cls):
+                cval = cls.value.strip()
+                if "::" not in cval or cval.startswith("::") or cval.endswith("::"):
+                    self.error(node_line(cls), "RM033",
+                               "Plugin base '%s' field 'class' must be a C++ namespace-qualified "
+                               "class (e.g. 'nav2_core::GlobalPlanner')." % bkey.value,
+                               "RosValidator.checkPluginBase.")
+                elif not is_quoted(cls):
+                    self.error(node_line(cls), "RM020",
+                               "Plugin base '%s' class '%s' is not quoted." % (bkey.value, cval),
+                               "':' cannot appear in an Xtext ID; quote the class.")
+            header = mapping_get(bval, "header")
+            if is_scalar(header) and not is_quoted(header) and not RE_ID.match(header.value):
+                self.error(node_line(header), "RM020",
+                           "Plugin base '%s' header '%s' is not quoted." % (bkey.value, header.value),
+                           "'/' and '.' cannot appear in an Xtext ID; quote the header path.")
+            loader = mapping_get(bval, "loader")
+            if is_scalar(loader) and loader.value.strip() != PLUGINLIB:
+                self.warn(node_line(loader), "RM047",
+                          "Plugin base '%s' uses loader '%s'." % (bkey.value, loader.value.strip()),
+                          "Only 'pluginlib' is built in. Any other loader must be registered by "
+                          "exactly one enabled language plugin (for example 'bt' by the BT "
+                          "plugin); otherwise the validator rejects it with \"uses loader ..., "
+                          "which no enabled plugin registers\" (RosValidator.checkPluginBaseLoader). "
+                          "This linter cannot see which plugins are enabled.")
 
     def check_ros2_artifacts(self, node):
         if not is_mapping(node):
@@ -2291,6 +2471,35 @@ class Linter(object):
 
     def check_ros2_artifact_body(self, art_key, node):
         self.check_duplicate_keys(node, "artifact '%s'" % art_key.value)
+
+        keys = mapping_keys(node)
+        if "plugins" in keys:
+            if "node" in keys:
+                self.error(node_line(mapping_get_pair(node, "plugins")[0]), "RM038",
+                           "Artifact '%s' declares both 'node:' and 'plugins:'." % art_key.value,
+                           "An artifact holds a node or plugins, never both (Ros.xtext Artifact). "
+                           "Put the plugins in an artifact of their own; it is built as a shared "
+                           "library.")
+                return
+            for key, val in mapping_items(node):
+                if not is_scalar(key) or key.value == "plugins":
+                    continue
+                self.error(node_line(key), "RM036",
+                           "Artifact '%s' holds plugins, so '%s:' cannot appear in it."
+                           % (art_key.value, key.value),
+                           "An artifact with 'plugins:' contains nothing else (Ros.xtext Artifact); "
+                           "put interfaces, parameters and @ blocks on each plugin.")
+            plugins = mapping_get(node, "plugins")
+            if is_mapping(plugins):
+                self.check_duplicate_keys(plugins, "'plugins:' block")
+                for pkey, pval in mapping_items(plugins):
+                    if is_scalar(pkey):
+                        self.check_ros2_plugin(pkey, pval)
+            else:
+                self.error(node_line(mapping_get_pair(node, "plugins")[0]), "RM036",
+                           "Block 'plugins:' inside artifact '%s' must be a mapping." % art_key.value,
+                           "Each plugin entry maps <PluginName>: { implements: <package>.<Base>, ... }.")
+            return
 
         is_lifecycle = False
         lifecycle_node = mapping_get(node, "lifecycle")
@@ -2308,6 +2517,7 @@ class Linter(object):
                 is_lifecycle = True
 
         blocks_present = []
+        slot_params_seen = {}
         declared_param_names = set()
         params_node = mapping_get(node, "parameters")
         if is_mapping(params_node):
@@ -2324,18 +2534,6 @@ class Linter(object):
                 if name == "node":
                     self.check_ros_names_position(val, "Node name")
                     self.check_name_conventions(val, "Node name", "RM012", WARNING)
-                continue
-
-            if name == "plugins":
-                if is_mapping(val):
-                    self.check_duplicate_keys(val, "'plugins:' block")
-                    for pkey, pval in mapping_items(val):
-                        if is_scalar(pkey):
-                            self.check_ros2_plugin(pkey, pval)
-                else:
-                    self.error(line, "RM036",
-                               "Block 'plugins:' inside artifact '%s' must be a mapping." % art_key.value,
-                               "Each plugin entry maps <PluginName>: { implements: ..., loader: ... }.")
                 continue
 
             if name in ROS2_FORBIDDEN_SPEC_BLOCKS:
@@ -2357,7 +2555,7 @@ class Linter(object):
             if name not in ROS2_NODE_BLOCKS:
                 self.error(line, "RM036",
                            "Unknown block '%s:' inside artifact '%s'." % (name, art_key.value),
-                           "A Node admits only: %s (and artifact allows 'plugins') (Ros.xtext:114-171)."
+                           "A Node admits only: %s (Ros.xtext:127-172)."
                            % ", ".join(ROS2_NODE_BLOCKS))
                 continue
 
@@ -2372,14 +2570,15 @@ class Linter(object):
                     if name == "parameters":
                         self.check_ros2_parameter(entry_key, entry_val)
                     elif name == "pluginslots":
-                        self.check_ros2_pluginslot(entry_key, entry_val, declared_param_names)
+                        self.check_ros2_pluginslot(entry_key, entry_val, declared_param_names,
+                                                   slot_params_seen)
                     else:
                         self.check_ros2_interface(name, entry_key, entry_val, is_lifecycle=is_lifecycle)
 
-        if "node" not in mapping_keys(node) and "plugins" not in mapping_keys(node):
+        if "node" not in mapping_keys(node):
             self.error(node_line(art_key), "RM038",
                        "Artifact '%s' has neither 'node:' nor 'plugins:' declaration." % art_key.value,
-                       "Ros.xtext:114-124 -- an Artifact declares a 'node:', 'plugins:', or both.")
+                       "Ros.xtext Artifact -- an artifact declares a 'node:' or 'plugins:'.")
 
         if blocks_present:
             self.check_ordering(blocks_present, ROS2_NODE_BLOCKS, node_line(art_key), "RM039",
@@ -2392,38 +2591,46 @@ class Linter(object):
         if not is_mapping(val):
             self.error(node_line(plugin_key), "RM036",
                        "Plugin '%s' body must be a mapping." % plugin_key.value,
-                       "Ros.xtext:178 -- declare 'implements:' / 'loader:' and interface blocks.")
+                       "Ros.xtext Plugin -- 'implements: <package>.<Base>' first, then interface "
+                       "and parameter blocks.")
             return
         self.check_duplicate_keys(val, "plugin '%s'" % plugin_key.value)
-        loader_node = mapping_get(val, "loader")
-        loader_val = "pluginlib"
-        if loader_node is not None:
-            if not is_scalar(loader_node) or loader_node.value not in ("pluginlib", "external"):
-                self.error(node_line(loader_node), "RM033",
-                           "Plugin '%s' has invalid loader '%s'."
-                           % (plugin_key.value, getattr(loader_node, "value", loader_node)),
-                           "Ros.xtext:173 -- loader must be 'pluginlib' or 'external'.")
-            else:
-                loader_val = loader_node.value
 
-        impl_node = mapping_get(val, "implements")
-        impl_val = impl_node.value.strip() if is_scalar(impl_node) else ""
-        if loader_val == "pluginlib" and not impl_val:
+        keys = mapping_keys(val)
+        impl_pair = mapping_get_pair(val, "implements")
+        if impl_pair[0] is None:
             self.error(node_line(plugin_key), "RM038",
-                       "Plugin '%s' with loader 'pluginlib' must specify 'implements: \"pkg::BaseClass\"'."
-                       % plugin_key.value,
-                       "RosValidator.checkPluginDefinition requires 'implements' with '::' for pluginlib.")
-        elif impl_val and ("::" not in impl_val or impl_val.startswith("::") or impl_val.endswith("::")):
-            self.error(node_line(impl_node), "RM033",
-                       "Plugin '%s' field 'implements' ('%s') must be a C++ namespace-qualified class."
-                       % (plugin_key.value, impl_val),
-                       "Use 'pkg::BaseClass' format.")
+                       "Plugin '%s' is missing 'implements:'." % plugin_key.value,
+                       "Every plugin implements a declared plugin base: 'implements: "
+                       "<package>.<Base>' (Ros.xtext Plugin).")
+        else:
+            if keys and keys[0] != "implements":
+                self.error(node_line(impl_pair[0]), "RM039",
+                           "'implements:' must be the first member of plugin '%s'." % plugin_key.value,
+                           "Ros.xtext Plugin reads 'implements:' before any other member, so "
+                           "another order does not parse.")
+            ref = self.check_qualified_ref(impl_pair[1], "Plugin '%s' field 'implements'"
+                                           % plugin_key.value, "Base")
+            name = self.local_ref_name(ref) if ref else None
+            if name is not None and name not in getattr(self, "local_bases", {}):
+                self.error(node_line(impl_pair[1]), "RM038",
+                           "Plugin '%s' implements '%s', which package '%s' does not declare under "
+                           "'pluginbases:'." % (plugin_key.value, ref, self.local_pkg),
+                           "The validator reports \"Couldn't resolve reference to PluginBase\".")
 
         for k, v in mapping_items(val):
             if not is_scalar(k):
                 continue
             kname, kline = k.value, node_line(k)
-            if kname in ("implements", "loader"):
+            if kname == "implements":
+                continue
+            if kname == "loader":
+                self.error(kline, "RM036",
+                           "Plugin '%s' declares 'loader:'; a plugin's loader comes from its base."
+                           % plugin_key.value,
+                           "Since Phase 4 the loader is a field of the plugin base "
+                           "('pluginbases: <Base>: loader: ...'), and a plugin only names that base "
+                           "with 'implements:'.")
                 continue
             if is_extension_block_key(kname):
                 self.check_extension_block(k, v)
@@ -2431,7 +2638,7 @@ class Linter(object):
             if kname not in ROS2_PLUGIN_BLOCKS:
                 self.error(kline, "RM036",
                            "Unknown block '%s:' inside plugin '%s'." % (kname, plugin_key.value),
-                           "A Plugin admits only: implements, loader, %s." % ", ".join(ROS2_PLUGIN_BLOCKS))
+                           "A Plugin admits only: implements, %s." % ", ".join(ROS2_PLUGIN_BLOCKS))
                 continue
             if is_mapping(v):
                 self.check_duplicate_keys(v, "'%s:' block" % kname)
@@ -2443,41 +2650,103 @@ class Linter(object):
                     else:
                         self.check_ros2_interface(kname, entry_key, entry_val, is_lifecycle=False)
 
-    def check_ros2_pluginslot(self, slot_key, val, declared_param_names):
+    def check_ros2_pluginslot(self, slot_key, val, declared_param_names, slot_params_seen):
         if not is_mapping(val):
             self.error(node_line(slot_key), "RM036",
                        "PluginSlot '%s' body must be a mapping." % slot_key.value,
-                       "Ros.xtext:224 -- declare 'base:' and 'parameter:'.")
+                       "Ros.xtext PluginSlot -- declare 'base:' and 'parameter:'.")
             return
         self.check_duplicate_keys(val, "pluginslot '%s'" % slot_key.value)
+        keys = []
         for k, _ in mapping_items(val):
-            if is_scalar(k) and k.value not in ("base", "parameter", "format", "default"):
+            if not is_scalar(k):
+                continue
+            if k.value not in PLUGINSLOT_KEYS:
                 self.error(node_line(k), "RM036",
                            "Unknown key '%s:' inside pluginslot '%s'." % (k.value, slot_key.value),
-                           "PluginSlot admits only: base, parameter, format, default.")
+                           "PluginSlot admits only: %s." % ", ".join(PLUGINSLOT_KEYS))
+            else:
+                keys.append(k.value)
+        if getattr(val, "flow_style", False) and keys != sorted(keys, key=PLUGINSLOT_KEYS.index):
+            self.error(node_line(slot_key), "RM039",
+                       "Inline pluginslot '%s' lists %s; the inline form takes %s in that order."
+                       % (slot_key.value, ", ".join(keys), ", ".join(PLUGINSLOT_KEYS)),
+                       "Ros.xtext PluginSlot -- only the indented block form takes any order.")
+
         format_node = mapping_get(val, "format")
         if format_node is not None:
             fmt_val = format_node.value.strip() if is_scalar(format_node) else ""
             if fmt_val not in VALID_PLUGINSLOT_FORMATS:
                 self.error(node_line(format_node), "RM038",
                            "PluginSlot '%s' has invalid 'format: %s' (must be 'class' or 'library')." % (slot_key.value, fmt_val),
-                           "Ros.xtext:178 -- PluginSlotValueFormat is 'class' (default) or 'library'.")
+                           "Ros.xtext:175 -- PluginSlotValueFormat is 'class' (default) or 'library'.")
+        multiple_node = mapping_get(val, "multiple")
+        if multiple_node is not None:
+            if not is_scalar(multiple_node) or multiple_node.value not in ("true", "false"):
+                self.error(node_line(multiple_node), "RM033",
+                           "PluginSlot '%s' field 'multiple' must be true or false."
+                           % slot_key.value, "boolean0 takes the bare keywords true / false.")
+            elif is_quoted(multiple_node):
+                self.error(node_line(multiple_node), "RM033",
+                           "PluginSlot '%s' field 'multiple' is quoted." % slot_key.value,
+                           "boolean0 takes the bare keywords true / false; a quoted value does "
+                           "not parse.")
+
+        base_ref = None
         base_node = mapping_get(val, "base")
-        base_val = base_node.value.strip() if is_scalar(base_node) else ""
-        if not base_val or "::" not in base_val or base_val.startswith("::") or base_val.endswith("::"):
-            self.error(node_line(base_node or slot_key), "RM038",
-                       "PluginSlot '%s' must declare a C++ qualified 'base:' class ('pkg::Base')." % slot_key.value,
-                       "Ros.xtext:229 -- 'base:' is required and must contain '::'.")
+        if base_node is None:
+            self.error(node_line(slot_key), "RM038",
+                       "PluginSlot '%s' is missing 'base:'." % slot_key.value,
+                       "'base: <package>.<Base>' names the plugin base the slot takes.")
+        else:
+            base_ref = self.check_qualified_ref(base_node, "PluginSlot '%s' field 'base'"
+                                                % slot_key.value, "Base")
+            name = self.local_ref_name(base_ref) if base_ref else None
+            if name is not None and name not in getattr(self, "local_bases", {}):
+                self.error(node_line(base_node), "RM038",
+                           "PluginSlot '%s' takes base '%s', which package '%s' does not declare "
+                           "under 'pluginbases:'." % (slot_key.value, base_ref, self.local_pkg),
+                           "The validator reports \"Couldn't resolve reference to PluginBase\".")
+
         param_node = mapping_get(val, "parameter")
         param_val = param_node.value.strip() if is_scalar(param_node) else ""
         if not param_val:
             self.error(node_line(param_node or slot_key), "RM038",
                        "PluginSlot '%s' is missing 'parameter:'." % slot_key.value,
-                       "Ros.xtext:230 -- 'parameter:' links the slot to a String / Array[String] node parameter.")
-        elif param_val not in declared_param_names:
-            self.error(node_line(param_node), "RM038",
-                       "PluginSlot '%s' references undeclared node parameter '%s'." % (slot_key.value, param_val),
-                       "Declare parameter '%s' in this node's 'parameters:' block." % param_val)
+                       "The slot declares this node parameter itself (a string, or a string list "
+                       "with 'multiple: true').")
+        elif param_val in declared_param_names:
+            self.error(node_line(param_node), "RM048",
+                       "PluginSlot '%s' declares parameter '%s', which is also listed under the "
+                       "node's parameters; remove it there, the slot declares it."
+                       % (slot_key.value, param_val),
+                       "RosValidator.checkNodePluginSlots (slot.parameterConflict).")
+        elif param_val in slot_params_seen:
+            self.error(node_line(param_node), "RM048",
+                       "PluginSlot '%s' declares parameter '%s', which slot '%s' of the same node "
+                       "already declares." % (slot_key.value, param_val, slot_params_seen[param_val]),
+                       "RosValidator.checkNodePluginSlots (slot.parameterConflict).")
+        else:
+            slot_params_seen[param_val] = slot_key.value
+
+        default_node = mapping_get(val, "default")
+        if default_node is not None:
+            default_ref = self.check_qualified_ref(default_node, "PluginSlot '%s' field 'default'"
+                                                   % slot_key.value, "Plugin")
+            name = self.local_ref_name(default_ref) if default_ref else None
+            plugins = getattr(self, "local_plugins", {})
+            if name is not None:
+                if name not in plugins:
+                    self.error(node_line(default_node), "RM038",
+                               "PluginSlot '%s' default '%s' is not a plugin of package '%s'."
+                               % (slot_key.value, default_ref, self.local_pkg),
+                               "The validator reports \"Couldn't resolve reference to Plugin\".")
+                elif (base_ref and self.resolvable_base_ref(plugins[name])
+                      and plugins[name] != base_ref):
+                    self.error(node_line(default_node), "RM048",
+                               "Default plugin '%s' implements '%s', but slot '%s' takes '%s'."
+                               % (name, plugins[name], slot_key.value, base_ref),
+                               "RosValidator.checkNodePluginSlots (slot.defaultWrongBase).")
 
     def check_placeholder_name(self, name, line):
         """An interface name still holding the extractor's {...} placeholders (a name built at
@@ -3239,6 +3508,11 @@ class Linter(object):
                     mapping_get_pair(node, extra)[0],
                     mapping_get(node, extra),
                 )
+            elif extra == "plugins":
+                self.error(node_line(mapping_get_pair(node, extra)[0]), "RM036",
+                           "Node '%s' uses 'plugins:', which RosNode no longer has." % node_key.value,
+                           "Attach plugins per slot of the host node instead: 'slots: <slot>: "
+                           "[<package>.<Plugin>, ...]' (RosSystem.xtext SlotAttachment).")
             elif extra not in ROSSYSTEM_NODE_KEYS:
                 self.error(node_line(mapping_get_pair(node, extra)[0]), "RM036",
                            "Unknown key '%s:' in node '%s'." % (extra, node_key.value),
@@ -3264,25 +3538,89 @@ class Linter(object):
                       "'namespace:' has zero corpus support.",
                       "0 of 52 corpus .rossystem files use it (emission-profile sec 3). Avoid.")
 
-        self.check_ordering([k for k in keys if k in ROSSYSTEM_NODE_KEYS],
-                            ROSSYSTEM_NODE_KEYS, node_line(node_key), "RM039",
-                            "Node member",
-                            "RosSystem.xtext:60-75 fixes the order %s "
-                            "(emission-profile rule 22)." % " -> ".join(ROSSYSTEM_NODE_KEYS))
+        ordered = [k for k in keys if k in ROSSYSTEM_NODE_KEYS]
+        if ordered != sorted(ordered, key=ROSSYSTEM_NODE_KEYS.index):
+            self.error(node_line(node_key), "RM039",
+                       "Node member order is %s; canonical order is %s."
+                       % (" -> ".join(ordered), " -> ".join(sorted(ordered, key=ROSSYSTEM_NODE_KEYS.index))),
+                       "RosSystem.xtext:61-81 fixes the order %s; it is a sequence, so another "
+                       "order does not parse (emission-profile rule 22)." % " -> ".join(ROSSYSTEM_NODE_KEYS))
 
         iface_node = mapping_get(node, "interfaces")
         if iface_node is not None:
             self.check_interfaces(iface_node, node_key, interfaces, resolved)
 
-        plugins_node = mapping_get(node, "plugins")
-        if plugins_node is not None and not is_sequence(plugins_node):
-            self.error(node_line(plugins_node), "RM036",
-                       "Node '%s' field 'plugins:' must be a list of '<pkg>.<Plugin>' strings." % node_key.value,
-                       "RosSystem.xtext -- e.g. plugins: [\"my_plugins.StraightLine\"].")
+        slots_node = mapping_get(node, "slots")
+        if slots_node is not None:
+            from_node = mapping_get(node, "from")
+            self.check_rossystem_slots(slots_node, node_key,
+                                       from_node.value if is_scalar(from_node) else None)
 
         param_node = mapping_get(node, "parameters")
         if param_node is not None:
             self.check_rossystem_parameters(param_node, node_key)
+
+    def check_rossystem_slots(self, node, node_key, from_ref):
+        """slots: <slot>: [<package>.<Plugin>, ...] -- RosSystem.xtext SlotAttachment, checked as
+        RosSystemValidator.checkRosNodePlugins does. The host-dependent rules (the slot exists,
+        takes one or several plugins, and the plugin implements its base) run only when the host
+        node is declared in a .ros2 next to this file."""
+        if not is_mapping(node):
+            self.error(node_line(node), "RM036",
+                       "Node '%s' field 'slots:' must map each slot to a list of plugins." % node_key.value,
+                       "e.g. slots:\n  planner: [my_plugins.StraightLine]")
+            return
+        self.check_duplicate_keys(node, "'slots:' of node '%s'" % node_key.value)
+        model = load_local_plugin_model(os.path.dirname(os.path.abspath(self.path)))
+        host = model["hosts"].get(from_ref) if from_ref else None
+        for skey, sval in mapping_items(node):
+            if not is_scalar(skey):
+                continue
+            slot, line = skey.value, node_line(skey)
+            if not is_sequence(sval):
+                self.error(line, "RM036",
+                           "Slot '%s' of node '%s' must be a list of '<package>.<Plugin>'."
+                           % (slot, node_key.value), "e.g. %s: [my_plugins.StraightLine]" % slot)
+                continue
+            if not sval.value:
+                raw = self.lines[line - 1] if 1 <= line <= len(self.lines) else ""
+                if re.search(r":\s*\[\]", raw):
+                    self.error(line, "RM033",
+                               "Slot '%s' is attached with '[]', which does not parse." % slot,
+                               "The lexer reads '[]' as one token; write '[ ]' or remove the line "
+                               "to attach nothing.")
+            refs = []
+            for item in sval.value:
+                ref = self.check_qualified_ref(item, "Plugin attached to slot '%s'" % slot, "Plugin")
+                if ref is None:
+                    continue
+                if ref in refs:
+                    self.error(node_line(item), "RM048",
+                               "Plugin '%s' is attached to slot '%s' more than once." % (ref, slot),
+                               "RosSystemValidator.checkRosNodePlugins (rosnode.slotDuplicatePlugin).")
+                    continue
+                refs.append(ref)
+            if host is None:
+                continue
+            if slot not in host:
+                self.error(line, "RM048",
+                           "Host node '%s' has no plugin slot '%s'." % (from_ref, slot),
+                           "Its slots: %s. The validator reports \"Couldn't resolve reference to "
+                           "PluginSlot\"." % (", ".join(sorted(host)) or "none"))
+                continue
+            info = host[slot]
+            if len(refs) > 1 and not info["multiple"]:
+                self.error(line, "RM048",
+                           "Slot '%s' takes one plugin; set 'multiple: true' on the slot to attach "
+                           "several." % slot,
+                           "RosSystemValidator.checkRosNodePlugins (rosnode.slotTooManyPlugins).")
+            for ref in refs:
+                impl = model["plugins"].get(ref)
+                if impl and info["base"] and impl != info["base"]:
+                    self.error(line, "RM048",
+                               "Plugin '%s' implements '%s', but slot '%s' on host node '%s' takes '%s'."
+                               % (ref, impl, slot, from_ref, info["base"]),
+                               "RosSystemValidator.checkRosNodePlugins (rosnode.incompatiblePlugin).")
 
     def check_from_reference(self, node, node_key):
         """Returns the resolved node-catalogue entry ({'file','artifact','interfaces'}) when

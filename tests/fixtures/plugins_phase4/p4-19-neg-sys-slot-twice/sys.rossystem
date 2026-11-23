@@ -1,0 +1,8 @@
+sys:
+  nodes:
+    "host_inst":
+      from: "core.host"
+      slots:
+        planner: [core.Smooth]
+        critics: [core.Goal]
+        critics: [core.Align]

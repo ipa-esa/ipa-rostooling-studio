@@ -211,7 +211,8 @@ def extract_model(path, use_catalogue=True):
                 "package": None,
                 "nodeName": None,
                 "namespace": None,
-                "plugins": [],
+                "plugins": [],            # every attached plugin, in slot order
+                "slots": [],              # [{"slot": name, "plugins": [refs]}] from slots:
                 "extensions": [],
                 "interfaces": [],
                 "params": [],
@@ -238,11 +239,17 @@ def extract_model(path, use_catalogue=True):
                 if L.is_scalar(ns_node):
                     nrec["namespace"] = _strip_quotes(ns_node.value)
 
-                plugins_node = L.mapping_get(val, "plugins")
-                if L.is_sequence(plugins_node):
-                    for pe in plugins_node.value:
-                        if L.is_scalar(pe) and _strip_quotes(pe.value).strip():
-                            nrec["plugins"].append(_strip_quotes(pe.value).strip())
+                # slots: <slot>: [<package>.<Plugin>, ...] (RosSystem.xtext SlotAttachment)
+                for skey, sval in L.mapping_items(L.mapping_get(val, "slots")):
+                    if not L.is_scalar(skey):
+                        continue
+                    refs = []
+                    if L.is_sequence(sval):
+                        for pe in sval.value:
+                            if L.is_scalar(pe) and _strip_quotes(pe.value).strip():
+                                refs.append(_strip_quotes(pe.value).strip())
+                    nrec["slots"].append({"slot": skey.value, "plugins": refs})
+                    nrec["plugins"].extend(refs)
 
                 nrec["extensions"] = _extract_extension_blocks(val)
 
@@ -980,7 +987,7 @@ var DATA = /*__DATA__*/null;
 
       // level 3: full detail bands
       if(m.namespace){ var nsr=el("div","nsrow"); nsr.textContent="namespace: "+m.namespace; box.appendChild(nsr); }
-      if(m.plugins && m.plugins.length){ var plr=el("div","nsrow"); plr.textContent="plugins: "+m.plugins.join(", "); box.appendChild(plr); }
+      if(m.slots && m.slots.length){ m.slots.forEach(function(sl){ var plr=el("div","nsrow"); plr.textContent="slot "+sl.slot+": "+(sl.plugins.length?sl.plugins.join(", "):"(none)"); box.appendChild(plr); }); }
       if(m.extensions && m.extensions.length){ var exr=el("div","nsrow"); exr.textContent="extensions: "+m.extensions.map(function(x){return x.name+(x.keys&&x.keys.length?"("+x.keys.join(", ")+")":"");}).join(", "); box.appendChild(exr); }
       KIND_ORDER.forEach(function(k){
         if(k==="param") return;

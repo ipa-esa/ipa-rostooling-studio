@@ -238,7 +238,7 @@ accepts both `'` and `"`, so the difference vanishes at parse time.
 | `RM036` | ERROR | Unknown key in a node block, interface, or parameter | `Ros.xtext:121-159`, `Ros2.xtext:49-124` |
 | `RM037` | ERROR | Unknown key at package/system level | `Ros2.xtext:13-24` |
 | `RM038` | ERROR | Missing mandatory member (`node:`, `type:`, `from:`, `value:`) | grammar (non-optional assignments) |
-| `RM039` | WARNING | Member/block ordering deviates from canonical | profile rules 21–25, 27 |
+| `RM039` | WARNING; ERROR where the grammar fixes the order (AmentPackage members, a `.rossystem` RosNode's members, `implements:` first in a plugin, the inline `{ ... }` pluginslot) | Member/block ordering deviates from canonical | profile rules 21–25, 27; `Ros2.xtext:13-28`, `RosSystem.xtext:61-81` |
 | `RM040` | WARNING | Entries within a block not alphabetically sorted | profile rule 26 |
 | `RM041` | ERROR | Unreachable, unknown, or quoted parameter type | grammar-subset §5.3, profile rule 16 |
 | `RM042` | ERROR | `True`/`False` instead of `true`/`false` | profile rule 18 (**silent corruption**) |
@@ -246,6 +246,8 @@ accepts both `'` and `"`, so the difference vanishes at parse time.
 | `RM044` | WARNING | Zero-corpus-support construct (`dependencies:`, `ns:`, `namespace:`) | profile §3 |
 | `RM045` | WARNING | `Struct` / `List` / `Base64` parameter type | grammar-subset §5.4, profile §3 |
 | `RM046` | INFO | `Array [` with a space before the bracket | profile rule 17 |
+| `RM047` | WARNING | A plugin base uses a loader other than `pluginlib`; the validator accepts it only when exactly one enabled language plugin registers that loader, which the linter cannot see | `RosValidator.checkPluginBaseLoader`, added 2026-11-23 |
+| `RM048` | ERROR | Plugin and slot consistency: a slot's parameter is also a node parameter or another slot's; a slot default implements another base; in a `.rossystem`, a plugin attached twice to a slot, several plugins on a slot without `multiple: true`, an attached plugin of another base, or an unknown slot (the last three only when the host node's `.ros2` sits next to the file) | `RosValidator.checkNodePluginSlots`, `RosSystemValidator.checkRosNodePlugins`, added 2026-11-23 |
 | `RM095` | WARNING (`.ros2`) / ERROR (`.rossystem`) | Parameter value is a quoted string shaped like `[...]`/`{...}` instead of a real list | `CheckParameterValue` (validator-rules §2.6), added 2026-09-03 (**silent corruption**) |
 
 ### `.rossystem` structure
@@ -647,9 +649,10 @@ the script appears in this README and vice versa, with no orphans in either dire
 
 ### Whole-corpus run — 336 files, 0 crashes
 
-**Re-measured 2026-08-14** against the current script. It emits **86** distinct ids -- RM000-RM098
-plus the `RM002B` and `RM008T` variants -- which is **85 rules**<!--@count:rules-->, RM000 being the internal
-read/parse failure rather than a rule. (RM094, the column-0 comment check, and the RM090/RM033
+**Re-measured 2026-08-14** against the current script. It emits **88** distinct ids -- RM000-RM098
+plus the `RM002B` and `RM008T` variants -- which is **87 rules**<!--@count:rules-->, RM000 being the internal
+read/parse failure rather than a rule. (RM047 and RM048, the Phase 4 plugin rules, were added
+2026-11-23 and took no part in this sweep.) (RM094, the column-0 comment check, and the RM090/RM033
 severity corrections landed after this sweep and change none of its counts: no corpus file
 exhibits any of the three.) This supersedes the
 counts the three amendments above call stale, and adds the `.ros` corpus, which the old 305-file

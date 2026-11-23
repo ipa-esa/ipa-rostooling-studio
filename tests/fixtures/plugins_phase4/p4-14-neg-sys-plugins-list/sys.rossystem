@@ -1,0 +1,5 @@
+sys:
+  nodes:
+    "host_inst":
+      from: "core.host"
+      plugins: ["core.Smooth"]

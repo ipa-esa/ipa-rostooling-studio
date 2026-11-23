@@ -1,0 +1,41 @@
+core:
+  pluginbases:
+    Planner:
+      class: "core::Planner"
+      header: "core/planner.hpp"
+      loader: pluginlib
+    Critic:
+      class: "core::Critic"
+      header: "core/critic.hpp"
+      loader: pluginlib
+  artifacts:
+    planners:
+      plugins:
+        Straight:
+          implements: core.Planner
+        Smooth:
+          implements: "core.Planner"
+    critics:
+      plugins:
+        Goal:
+          implements: core.Critic
+        Align:
+          implements: core.Critic
+    host:
+      node: host
+      plugins:
+        Extra:
+          implements: core.Planner
+      parameters:
+        rate:
+          type: Integer
+      pluginslots:
+        planner:
+          base: core.Planner
+          parameter: planner_plugin
+          default: core.Straight
+        critics:
+          base: core.Critic
+          parameter: critic_plugins
+          multiple: true
+          format: class

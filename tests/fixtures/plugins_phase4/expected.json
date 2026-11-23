@@ -1,0 +1,102 @@
+{
+  "about": "Verdicts of the real RosTooling language server (tests/oracle/ask_oracle.py, server jar of RosTooling_Extension built from RosTooling esa/feature/plugin-architecture at Phase 4 step 7, no language plugins enabled), recorded 2026-11-23. true = the server reported at least one error in that file. To refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/plugins_phase4/p4-*",
+  "verdicts": {
+    "p4-01-valid": {
+      "core.ros2": false,
+      "sys.rossystem": false
+    },
+    "p4-02-neg-plugin-loader": {
+      "core.ros2": true
+    },
+    "p4-03-neg-cpp-implements": {
+      "core.ros2": true
+    },
+    "p4-04-neg-node-and-plugins": {
+      "core.ros2": true
+    },
+    "p4-05-neg-base-no-header": {
+      "core.ros2": true
+    },
+    "p4-06-neg-base-class-unqualified": {
+      "core.ros2": true
+    },
+    "p4-07-neg-slot-param-conflict": {
+      "core.ros2": true
+    },
+    "p4-08-neg-slot-param-shared": {
+      "core.ros2": true
+    },
+    "p4-09-neg-slot-default-wrong-base": {
+      "core.ros2": true
+    },
+    "p4-10-neg-implements-unknown-base": {
+      "core.ros2": true
+    },
+    "p4-11-neg-unknown-loader": {
+      "core.ros2": true
+    },
+    "p4-12-neg-slot-no-parameter": {
+      "core.ros2": true
+    },
+    "p4-13-neg-slot-old-cpp-base": {
+      "core.ros2": true
+    },
+    "p4-14-neg-sys-plugins-list": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-15-neg-sys-too-many": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-16-neg-sys-dup-plugin": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-17-neg-sys-wrong-base": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-18-neg-sys-unknown-slot": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-19-neg-sys-slot-twice": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-20-neg-sys-slots-order": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-21-neg-empty-slot-brackets": {
+      "core.ros2": false,
+      "sys.rossystem": true
+    },
+    "p4-22-neg-multiple-quoted": {
+      "core.ros2": true
+    },
+    "p4-23-valid-flow-slot": {
+      "core.ros2": false
+    },
+    "p4-24-neg-implements-not-first": {
+      "core.ros2": true
+    },
+    "p4-25-neg-ext-on-plugin-artifact": {
+      "core.ros2": true
+    },
+    "p4-26-valid-pluginbases-after-artifacts": {
+      "core.ros2": false
+    },
+    "p4-27-valid-empty-slot-spaced": {
+      "core.ros2": false,
+      "sys.rossystem": false
+    }
+  },
+  "deliberate": {
+    "p4-11-neg-unknown-loader/core.ros2": {
+      "lint_rule": "RM047",
+      "why": "The server rejects a base whose loader no enabled language plugin registers. Which plugins are enabled is known only where the model is used, so the linter warns (RM047) instead of failing."
+    }
+  }
+}

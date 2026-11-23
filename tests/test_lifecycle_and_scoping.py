@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pytest suite for lifecycle node extraction, active_in states, and scoped rossystem connections."""
 
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -378,27 +379,58 @@ def test_linter_subsystem_connection_and_rm053_silencing(tmp_path):
     assert len(plain_rm053) == 1, "RM053 must fire when fromFile is absent and not a generator"
 
 
-def test_phase1_plugins_and_slots_lint_and_plot(tmp_path):
+def test_plugin_bases_slots_and_attachments_lint_and_plot(tmp_path):
+    """Phase 4 plugin syntax: bases declare class/header/loader, plugins name a base with
+    'implements: <package>.<Base>', slots own their parameter, and a system attaches plugins
+    per slot under 'slots:'."""
     import ros_plot
+
+    plug_ros2 = tmp_path / "planner_plugins.ros2"
+    plug_ros2.write_text("""planner_plugins:
+  pluginbases:
+    GlobalPlanner:
+      class: "nav2_core::GlobalPlanner"
+      header: "nav2_core/global_planner.hpp"
+      loader: pluginlib
+    LeafBase:
+      class: "custom_core::LeafBase"
+      header: "custom_core/leaf_base.hpp"
+      loader: pluginlib
+  artifacts:
+    straight_line_lib:
+      plugins:
+        StraightLine:
+          implements: planner_plugins.GlobalPlanner
+          publishers:
+            debug_plan:
+              type: "std_msgs/msg/String"
+        Smooth:
+          implements: planner_plugins.GlobalPlanner
+    leaf_lib:
+      plugins:
+        DockLeaf:
+          implements: planner_plugins.LeafBase
+""")
+    p_linter = rosmodel_lint.Linter(str(plug_ros2))
+    p_linter.run()
+    p_errors = [f for f in p_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert not p_errors, f"Node-less plugin library had lint errors: {p_errors}"
 
     host_ros2 = tmp_path / "planner_host.ros2"
     host_ros2.write_text("""planner_host:
   artifacts:
     planner_server:
       node: planner_server
-      parameters:
-        leaf_libraries:
-          type: Array [ String ]
-        planner_plugin:
-          type: String
       pluginslots:
         global_planner:
-          base: "nav2_core::GlobalPlanner"
+          base: planner_plugins.GlobalPlanner
           parameter: planner_plugin
+          default: planner_plugins.StraightLine
         leaves:
-          base: "custom_core::LeafBase"
+          base: planner_plugins.LeafBase
           parameter: leaf_libraries
           format: library
+          multiple: true
 """)
     h_linter = rosmodel_lint.Linter(str(host_ros2))
     h_linter.run()
@@ -422,28 +454,25 @@ def test_phase1_plugins_and_slots_lint_and_plot(tmp_path):
     b_linter = rosmodel_lint.Linter(str(bad_host))
     b_linter.run()
     b_errors = [f for f in b_linter.findings if f.severity == rosmodel_lint.ERROR]
-    assert any(f.rule == "RM038" and "format" in f.message for f in b_errors), (
-        f"Invalid pluginslot format must trigger RM038: {b_errors}"
-    )
+    assert any(f.rule == "RM038" and "format" in f.message for f in b_errors), b_errors
+    assert any(f.rule == "RM033" and "is a C++ class" in f.message for f in b_errors), b_errors
+    assert any(f.rule == "RM048" and "also listed under the node's parameters" in f.message
+               for f in b_errors), b_errors
 
-    plug_ros2 = tmp_path / "planner_plugins.ros2"
-    plug_ros2.write_text("""planner_plugins:
+    old_plugin = tmp_path / "old_plugins.ros2"
+    old_plugin.write_text("""old_plugins:
   artifacts:
-    straight_line_lib:
+    lib:
       plugins:
-        StraightLine:
+        Old:
           implements: "nav2_core::GlobalPlanner"
           loader: pluginlib
-          publishers:
-            debug_plan:
-              type: "std_msgs/msg/String"
-        ExtHelper:
-          loader: external
 """)
-    p_linter = rosmodel_lint.Linter(str(plug_ros2))
-    p_linter.run()
-    p_errors = [f for f in p_linter.findings if f.severity == rosmodel_lint.ERROR]
-    assert not p_errors, f"Node-less plugin library had lint errors: {p_errors}"
+    o_linter = rosmodel_lint.Linter(str(old_plugin))
+    o_linter.run()
+    o_errors = [(f.rule, f.message) for f in o_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert any(r == "RM036" and "loader comes from its base" in m for r, m in o_errors), o_errors
+    assert any(r == "RM033" and "is a C++ class" in m for r, m in o_errors), o_errors
 
     sys_file = tmp_path / "plug_app.rossystem"
     sys_file.write_text("""plug_app:
@@ -451,17 +480,63 @@ def test_phase1_plugins_and_slots_lint_and_plot(tmp_path):
   nodes:
     "host":
       from: "planner_host.planner_server"  # project-local
-      plugins: ["planner_plugins.StraightLine"]
+      slots:
+        global_planner: [planner_plugins.Smooth]
+        leaves: [planner_plugins.DockLeaf]
 """)
     s_linter = rosmodel_lint.Linter(str(sys_file))
     s_linter.run()
     s_errors = [f for f in s_linter.findings if f.severity == rosmodel_lint.ERROR]
-    assert not s_errors, f"System with plugins had lint errors: {s_errors}"
+    assert not s_errors, f"System with slot attachments had lint errors: {s_errors}"
+
+    bad_sys = tmp_path / "bad_app.rossystem"
+    bad_sys.write_text("""bad_app:
+  fromFile: "plug_bringup/launch/app.launch.py"  # caller-supplied
+  nodes:
+    "host":
+      from: "planner_host.planner_server"  # project-local
+      slots:
+        global_planner: [planner_plugins.Smooth, planner_plugins.StraightLine]
+        leaves: [planner_plugins.Smooth]
+""")
+    bs_linter = rosmodel_lint.Linter(str(bad_sys))
+    bs_linter.run()
+    bs_errors = [f.message for f in bs_linter.findings if f.severity == rosmodel_lint.ERROR]
+    assert any("takes one plugin" in m for m in bs_errors), bs_errors
+    assert any("implements 'planner_plugins.GlobalPlanner', but slot 'leaves'" in m for m in bs_errors), bs_errors
 
     model = ros_plot.extract_model(str(sys_file))
-    assert model["nodes"][0]["plugins"] == ["planner_plugins.StraightLine"]
+    assert model["nodes"][0]["slots"] == [
+        {"slot": "global_planner", "plugins": ["planner_plugins.Smooth"]},
+        {"slot": "leaves", "plugins": ["planner_plugins.DockLeaf"]},
+    ]
+    assert model["nodes"][0]["plugins"] == ["planner_plugins.Smooth", "planner_plugins.DockLeaf"]
     html = ros_plot.render_html([model])
-    assert "planner_plugins.StraightLine" in html
+    assert "planner_plugins.Smooth" in html
+
+
+PHASE4_CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "plugins_phase4")
+
+
+def test_plugin_syntax_lint_agrees_with_language_server():
+    """Every file in fixtures/plugins_phase4 was run through the real language server
+    (tests/oracle/ask_oracle.py); expected.json records whether it reported errors. The linter
+    must reach the same verdict, except where expected.json lists a deliberate difference."""
+    with open(os.path.join(PHASE4_CASES, "expected.json")) as fh:
+        expected = json.load(fh)
+    disagreements = []
+    for case, files in sorted(expected["verdicts"].items()):
+        for name, rejected in files.items():
+            linter = rosmodel_lint.Linter(os.path.join(PHASE4_CASES, case, name))
+            linter.run()
+            errors = [f for f in linter.findings if f.severity == rosmodel_lint.ERROR]
+            known = expected["deliberate"].get(case + "/" + name)
+            if known:
+                assert not errors and any(f.rule == known["lint_rule"] for f in linter.findings), (
+                    case, name, [(f.rule, f.message) for f in linter.findings])
+            elif bool(errors) != rejected:
+                disagreements.append((case, name, rejected, [(f.rule, f.message) for f in errors]))
+    assert not disagreements, disagreements
 
 
 def test_phase2_extension_blocks_lint_and_plot(tmp_path):
@@ -483,11 +558,17 @@ def test_phase2_extension_blocks_lint_and_plot(tmp_path):
         channel: "main"
         out_port: pub->heartbeat
         rate_param: param->rate_hz
+    ext_lib:
       plugins:
         CustomExt:
-          loader: external
+          implements: ext_node.ExtBase
           @audit:
             channel: "plugin"
+  pluginbases:
+    ExtBase:
+      class: "ext_node::ExtBase"
+      header: "ext_node/ext_base.hpp"
+      loader: pluginlib
 """)
     r2_linter = rosmodel_lint.Linter(str(ext_ros2))
     r2_linter.run()

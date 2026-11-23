@@ -1,0 +1,11 @@
+core:
+  artifacts:
+    planners:
+      plugins:
+        Straight:
+          implements: core.Planner
+  pluginbases:
+    Planner:
+      loader: pluginlib
+      class: "core::Planner"
+      header: "core/planner.hpp"
