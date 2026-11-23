@@ -841,7 +841,7 @@ be the reader's only signal that nothing needed it.
 | `.ros2` plugin | `implements: <package>.<Base>` **first** → interface & parameter blocks → trailing `@<extension>:` blocks (no `loader:`; it comes from the base) |
 | `.ros2` interface | `type:` → `ns:` → `active_in:` → `qos:` (`active_in:` only valid on lifecycle nodes) |
 | `.ros2` parameter | `type:` → **`default:`** → `ns:` → `value:` → `qos:` |
-| `.rossystem` node | `from:` → `namespace:` → `slots:` (`<slot>: [<package>.<Plugin>, ...]`; `[ ]` for none, not `[]`) → `interfaces:` → `parameters:` → trailing `@<extension>:` blocks (also permitted on `System` and indented under `- <iface>: ...` `RosInterface` entries) |
+| `.rossystem` node | `from:` → `namespace:` → `slots:` (`<slot>: [<package>.<Plugin>, ...]`; `[]` for none) → `interfaces:` → `parameters:` → trailing `@<extension>:` blocks (also permitted on `System` and indented under `- <iface>: ...` `RosInterface` entries) |
 | `.rossystem` **system-level** parameter | `ns:` → `type:` → `default:` → `value:` (no `qos:`) |
 
 Inside `@<extension>:` blocks, cross-references to declared interfaces or parameters use `pub->`, `sub->`, `ss->`, `sc->`, `as->`, `ac->`, or `param->`.

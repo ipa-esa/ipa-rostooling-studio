@@ -3582,13 +3582,6 @@ class Linter(object):
                            "Slot '%s' of node '%s' must be a list of '<package>.<Plugin>'."
                            % (slot, node_key.value), "e.g. %s: [my_plugins.StraightLine]" % slot)
                 continue
-            if not sval.value:
-                raw = self.lines[line - 1] if 1 <= line <= len(self.lines) else ""
-                if re.search(r":\s*\[\]", raw):
-                    self.error(line, "RM033",
-                               "Slot '%s' is attached with '[]', which does not parse." % slot,
-                               "The lexer reads '[]' as one token; write '[ ]' or remove the line "
-                               "to attach nothing.")
             refs = []
             for item in sval.value:
                 ref = self.check_qualified_ref(item, "Plugin attached to slot '%s'" % slot, "Plugin")
