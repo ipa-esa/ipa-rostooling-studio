@@ -622,8 +622,8 @@ time[2] stamps
 "geometry_msgs/msg/Point"[<=10] points
 ```
 
-- Write a primitive's bracket directly after the type (`int32[3]`); a space before the bracket (`time [2]`,
-  `float32 [4]`) also parses.
+- Write the bracket directly after the type (`int32[3]`); a space before it also parses. Emit the
+  unspaced form.
 - **`time[]`, `duration[]` and `Header[]` still have no unbounded form**; only the sized forms exist.
 - **Bounded strings (`string<=10`) have no form.** Emit `string` and mention the lost bound.
 - Needs a RosTooling build that has `SizedArray` (not in a release yet). An older server rejects
