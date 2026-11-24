@@ -560,7 +560,8 @@ A field is exactly two tokens: **a type, then a name.**
 
 `MessagePart+=MessagePart*` has **no line separator**, so the grammar permits any number of fields
 on one line. RosTooling's own test resources do exactly that —
-`plugins\de.fraunhofer.ipa.ros.xtext.testsesourcesasic_msgs\common_msgs.ros` writes
+`plugins\de.fraunhofer.ipa.ros.xtext.tests
+esourcesasic_msgs\common_msgs.ros` writes
 
 ```
     GoalID
@@ -600,26 +601,33 @@ language with **no trailing `:`** — the `BEGIN` is synthesised from the indent
 
 Three traps in that table:
 
-- **`time`, `duration` and `Header` have NO array form.** The alternation lists exactly fourteen
+- **`time`, `duration` and `Header` have NO unbounded array form.** The alternation lists exactly fourteen
   `…Array` rules and `timeArray` / `durationArray` / `HeaderArray` are not among them. `time[]` is
-  a parse error.
+  a parse error (`time[2]` and `time[<=2]` parse).
 - The keyword is `string`, not `string0` — `string0` is the *rule* name (`string0 returns
   primitives::string: {primitives::string} 'string';`). Same for `char` (rule `char`, eClass
   `char0`).
 - **`Header` is capitalised** and is its own primitive, not a spec reference.
 
-#### There are no bounded or fixed-size arrays
+#### Fixed-size and bounded arrays
 
-`ArraySpecRef` and the fourteen `…Array` rules hard-code the literal `'[]'`. ROS IDL's
-`float32[3]` and `string<=10` have no production at all. **Verified against the oracle** — both
-are lexer errors:
+`T[N]` is an array of exactly N elements and `T[<=N]` one of at most N, as in ROS `.msg` files.
+`T` can be any non-array type: a primitive, `time`, `duration`, `Header`, or a quoted spec
+reference. N is a number of at least 1; arrays do not nest.
 
 ```
-line 5  Invalid token float32[3
-line 5  mismatched input ']' expecting RULE_END
+float64[9] covariance
+int32[<=5] ids
+time[2] stamps
+"geometry_msgs/msg/Point"[<=10] points
 ```
 
-Emit the unbounded form and mention the lost bound in your response.
+- Write a primitive's bracket directly after the type (`int32[3]`); a space before the bracket (`time [2]`,
+  `float32 [4]`) also parses.
+- **`time[]`, `duration[]` and `Header[]` still have no unbounded form**; only the sized forms exist.
+- **Bounded strings (`string<=10`) have no form.** Emit `string` and mention the lost bound.
+- Needs a RosTooling build that has `SizedArray` (not in a release yet). An older server rejects
+  these forms with `Invalid token float32[3`; then emit `T[]` and mention the lost size.
 
 #### Referencing a type from another package — always fully qualified
 

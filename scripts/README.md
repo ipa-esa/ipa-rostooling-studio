@@ -271,7 +271,7 @@ without `fromFile:` is valid, and the server now rejects duplicate interface nam
 | `RM071` | Unknown member at package level; (WARNING) empty package or empty spec block | language server |
 | `RM073` | Spec-name or body-keyword structure wrong: trailing `:` on a spec name, multi-token spec line, missing/foreign body keyword | language server |
 | `RM074` | Unknown type token, or an array form that does not exist (`time[]`, `duration[]`, `Header[]`) | language server |
-| `RM075` | Fixed- or bounded-size array (`float32[3]`, `string<=10`) | language server |
+| `RM075` | Bounded string (`string<=10`); with a server older than the sized-array change also `float32[3]` and `float32[<=3]` | language server |
 | `RM076` | Quoted spec reference not shaped `<package>/msg/<Type>` | language server |
 | `RM077` | Field-line token structure wrong: odd token count, stray spaced `=`, constant in a Type position, or a field name that is not a legal `Data` | language server |
 | `RM079` | File uses the **brace** serialisation, not the indentation syntax | language server |
@@ -404,7 +404,7 @@ SKILL.md's output-layout rule.
   reference, transcribed from the package's own `.msg`/`.srv`/`.action` files, following
   message-to-message references to closure. Without it, a model referencing project-local types
   is **not loadable on its own** — an unresolved `type:` is a linking-layer ERROR. Per-field
-  defaults and bounded arrays have no `.ros` form and are dropped with a report (SKILL.md §8b).
+  defaults and bounded strings have no `.ros` form and are dropped with a report (SKILL.md §8b); fixed and bounded arrays are written as `T[N]` and `T[<=N]`.
 - **Package, artifact and node stay three distinct names** (SKILL.md §2a). The artifact is the
   *build target* — `add_executable(...)`/`add_library(...)` in `CMakeLists.txt` (with
   `${PROJECT_NAME}` resolved) or a `console_scripts` entry in `setup.py` — and the node is the

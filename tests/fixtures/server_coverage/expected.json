@@ -1,5 +1,5 @@
 {
-  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8 (cases named <rule>-<check> added 2026-11-23 in step 2; RM053 and RM058 rechecked with df327891, which adds the duplicate-interface-name check), no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/*",
+  "about": "One minimal case per rosmodel_lint rule that copies a grammar or validator rule (plan tab 'rosmodel_lint cut', step 0). Each case is base/ with one mutation (make_cases.py); case.json names the rule and the file. 'server' is what the real language server reported in that file (ERROR, WARNING, or null for nothing), recorded 2026-11-23 with the RosTooling_Extension server jar built from RosTooling commit 9f781be8 (cases named <rule>-<check> added 2026-11-23 in step 2; RM053 and RM058 rechecked with df327891, which adds the duplicate-interface-name check), no language plugins enabled. Refresh: python3 tests/oracle/ask_oracle.py --jar <server jar> --results <out.json> tests/fixtures/server_coverage/* RM075 now probes a bounded string (string<=10), 2026-11-24: float64[3] is valid with a RosTooling build that has SizedArray; the message was recorded with the 2.5.0 server jar, a newer build reads '<=' as one keyword.",
   "cases": {
     "RM010": {
       "file": "probe_pkg.ros2",
@@ -155,7 +155,7 @@
     "RM075": {
       "file": "probe_msgs.ros",
       "server": "ERROR",
-      "server_message": "Invalid token float64[3"
+      "server_message": "no viable alternative at input '<'"
     },
     "RM076": {
       "file": "probe_msgs.ros",

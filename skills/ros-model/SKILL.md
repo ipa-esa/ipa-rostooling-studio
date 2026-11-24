@@ -583,8 +583,9 @@ flag either as an error when reading a source file.
 | Form | Write | Not |
 |---|---|---|
 | scalar | `float32 x` | — |
-| array | `float32[] xs` | `float32[3] xs` — **no bounded arrays exist**, it is a lexer error |
-| `time` / `duration` / `Header` | `time stamp` | `time[] stamps` — these three have **no array form** |
+| array | `float32[] xs` | — |
+| fixed / bounded array | `float32[3] xs`, `float32[<=3] xs` | `string<=10 xs` — bounded strings have no form; needs a RosTooling build with `SizedArray` |
+| `time` / `duration` / `Header` | `time stamp` | `time[] stamps` — these three have **no unbounded array form** |
 | ref to any spec, incl. **own package** | `"pkg/msg/Type" field` | `Type field` — bare short names never resolve |
 | array of refs | `"pkg/msg/Type"[] fields` | — |
 | constant | `uint8 FAN_OFF=0` | `uint8 FAN_OFF = 0` — spaces split the token |
@@ -948,8 +949,8 @@ Run every line against the emitted file:
     same file the arrow targets are `<artifactName>::<interfaceName>`. Two different schemes; see
     rule 4b.
 11. `.ros` only: every spec that has fields in the input **has those fields in the output**, two
-    bare tokens per line at indent level 4, spec name at level 2 with no trailing `:`. No bounded
-    arrays. Every spec reference — including one into the file's own package — is a quoted
+    bare tokens per line at indent level 4, spec name at level 2 with no trailing `:`. Sized arrays (`T[3]`,
+    `T[<=3]`) only for a RosTooling build with `SizedArray`; bounded strings never. Every spec reference — including one into the file's own package — is a quoted
     `"pkg/msg/Type"`. Constants have no spaces around `=`. See §8b.
 12. **Report what you dropped or synthesised.** Before finishing, tell the caller about: every
     comment removed from a transcribed source (file, line, text — *DROPPED PROVENANCE*); any

@@ -43,6 +43,7 @@ import argparse
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -368,7 +369,7 @@ ROS_SCALARS = {
     "uint64", "float32", "float64", "string", "byte", "char",
     "time", "duration", "Header",
 }
-# these three have no array form (SKILL.md sec 8b)
+# these three have no unbounded array form; T[N] and T[<=N] exist for them (SKILL.md sec 8b)
 ROS_NO_ARRAY = {"time", "duration", "Header"}
 MSG_SECTIONS = {"msg": ["message"], "srv": ["request", "response"],
                 "action": ["goal", "result", "feedback"]}
@@ -423,29 +424,38 @@ def parse_msg_file(path, pkg, kind, flags):
     return sections
 
 
+SIZED_BOUND = re.compile(r"^(<=)?\d+$")
+
+
 def emit_ros_type(typ, pkg, path, lineno, flags):
     """A .msg field type -> its .ros spelling, or None when it cannot be written."""
     base, is_array, bound = typ, False, ""
     if base.endswith("]"):
         head, _, inner = base[:-1].partition("[")
         base, is_array, bound = head, True, inner
-    if bound:
+    if "<=" in base:
         flags.append(Flag(
-            "msg", "bounded/fixed array '%s' has no .ros form (bounded arrays are a "
-                   "lexer error, SKILL.md sec 8b); field dropped" % typ, path, lineno))
+            "msg", "bounded string '%s' has no .ros form; field dropped" % typ, path, lineno))
         return None
+    if bound and not SIZED_BOUND.match(bound):
+        flags.append(Flag(
+            "msg", "array size '%s' in '%s' is not a number; field dropped" % (bound, typ),
+            path, lineno))
+        return None
+    suffix = ("[%s]" % bound) if bound else ("[]" if is_array else "")
     if base in ROS_SCALARS:
-        if is_array and base in ROS_NO_ARRAY:
+        if is_array and not bound and base in ROS_NO_ARRAY:
             flags.append(Flag(
-                "msg", "'%s' has no array form in .ros; field dropped" % typ, path, lineno))
+                "msg", "'%s' has no unbounded array form in .ros; field dropped" % typ,
+                path, lineno))
             return None
-        return base + ("[]" if is_array else "")
+        return base + suffix
     # a reference to another spec: bare short name means this package
     ref = base if "/" in base else "%s/msg/%s" % (pkg, base)
     if ref.count("/") == 1:                       # 'pkg/Type' -> 'pkg/msg/Type'
         left, _, right = ref.partition("/")
         ref = "%s/msg/%s" % (left, right)
-    return '"%s"%s' % (ref, "[]" if is_array else "")
+    return '"%s"%s' % (ref, suffix)
 
 
 def emit_ros_package(pkg, specs, report_root, flags):
