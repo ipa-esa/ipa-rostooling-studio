@@ -1,0 +1,9 @@
+tf2_msgs:
+  msgs:
+    TFMessage
+      message
+rosgraph_msgs:
+  msgs:
+    Clock
+      message
+        'builtin_interfaces/msg/Time'[] clock

@@ -51,7 +51,27 @@
       "server": "ERROR",
       "server_message": "no viable alternative at input 'sometimes'"
     },
+    "RM033-bad-block-ref-prefix": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '-' expecting RULE_END"
+    },
+    "RM033-bad-lifecycle-state": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "no viable alternative at input 'Configuring'"
+    },
+    "RM033-quoted-lifecycle": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Couldn't convert 'null' to Boolean."
+    },
     "RM035": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "Durations of lease_duration, lifespan, deadline should be specified as a string of nanoseconds which can convert to int, or as infinite"
+    },
+    "RM035-duration-overflow": {
       "file": "probe_pkg.ros2",
       "server": "ERROR",
       "server_message": "Durations of lease_duration, lifespan, deadline should be specified as a string of nanoseconds which can convert to int, or as infinite"
@@ -60,6 +80,16 @@
       "file": "probe_pkg.ros2",
       "server": "ERROR",
       "server_message": "missing RULE_END at 'typo'"
+    },
+    "RM036-active-in-on-plain-node": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "The 'active_in' property can only be specified if the parent node is configured as a lifecycle node ('lifecycle: true')"
+    },
+    "RM036-block-on-nodeless-artifact": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '@' expecting RULE_END"
     },
     "RM037": {
       "file": "probe_pkg.ros2",
@@ -71,15 +101,30 @@
       "server": "ERROR",
       "server_message": "mismatched input 'interfaces:' expecting 'from:'"
     },
+    "RM038-system-parameter-without-value": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input '' expecting RULE_BEGIN"
+    },
     "RM039": {
       "file": "probe_sys.rossystem",
       "server": "ERROR",
       "server_message": "mismatched input 'namespace:' expecting RULE_END"
     },
+    "RM039-block-before-from": {
+      "file": "probe_sys.rossystem",
+      "server": "ERROR",
+      "server_message": "mismatched input '@' expecting 'from:'"
+    },
     "RM041": {
       "file": "probe_pkg.ros2",
       "server": "ERROR",
       "server_message": "no viable alternative at input 'Float'"
+    },
+    "RM041-array-without-element": {
+      "file": "probe_pkg.ros2",
+      "server": "ERROR",
+      "server_message": "mismatched input '' expecting '['"
     },
     "RM047": {
       "file": "probe_pkg.ros2",
@@ -147,6 +192,11 @@
       "server": "ERROR",
       "server_message": "extraneous input ':' expecting RULE_BEGIN"
     },
+    "RM073-srv-without-response": {
+      "file": "probe_msgs.ros",
+      "server": "ERROR",
+      "server_message": "missing 'response' at ''"
+    },
     "RM074": {
       "file": "probe_msgs.ros",
       "server": "ERROR",
@@ -156,6 +206,12 @@
       "file": "probe_msgs.ros",
       "server": "ERROR",
       "server_message": "no viable alternative at input '<'"
+    },
+    "RM075-sized-array-accepted": {
+      "file": "probe_msgs.ros",
+      "server": null,
+      "server_message": null,
+      "note": "The model is valid: float64[3] is a fixed-size array, accepted by RosTooling with SizedArray (checked 2026-11-24 with a server jar built from it, 0 errors, 0 warnings). The linter must not report it either."
     },
     "RM076": {
       "file": "probe_msgs.ros",
@@ -181,56 +237,6 @@
       "file": "probe_sys.rossystem",
       "server": "ERROR",
       "server_message": "missing EOF at ''"
-    },
-    "RM033-bad-block-ref-prefix": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "mismatched input '-' expecting RULE_END"
-    },
-    "RM033-bad-lifecycle-state": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "no viable alternative at input 'Configuring'"
-    },
-    "RM033-quoted-lifecycle": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "Couldn't convert 'null' to Boolean."
-    },
-    "RM035-duration-overflow": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "Durations of lease_duration, lifespan, deadline should be specified as a string of nanoseconds which can convert to int, or as infinite"
-    },
-    "RM036-active-in-on-plain-node": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "The 'active_in' property can only be specified if the parent node is configured as a lifecycle node ('lifecycle: true')"
-    },
-    "RM036-block-on-nodeless-artifact": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "mismatched input '@' expecting RULE_END"
-    },
-    "RM038-system-parameter-without-value": {
-      "file": "probe_sys.rossystem",
-      "server": "ERROR",
-      "server_message": "mismatched input '' expecting RULE_BEGIN"
-    },
-    "RM039-block-before-from": {
-      "file": "probe_sys.rossystem",
-      "server": "ERROR",
-      "server_message": "mismatched input '@' expecting 'from:'"
-    },
-    "RM041-array-without-element": {
-      "file": "probe_pkg.ros2",
-      "server": "ERROR",
-      "server_message": "mismatched input '' expecting '['"
-    },
-    "RM073-srv-without-response": {
-      "file": "probe_msgs.ros",
-      "server": "ERROR",
-      "server_message": "missing 'response' at ''"
     }
   }
 }

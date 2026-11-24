@@ -1,0 +1,17 @@
+sized_msgs:
+  msgs:
+    Base
+      message
+        int32 x
+    Sized
+      message
+        float64[9] covariance
+        int32[<=5] ids
+        string[3] names
+        byte[<=16] raw
+        time[2] stamps
+        duration[<=3] spans
+        Header[2] headers
+        'sized_msgs/msg/Base'[3] triple
+        'sized_msgs/msg/Base'[<=10] some
+        int32[] unbounded

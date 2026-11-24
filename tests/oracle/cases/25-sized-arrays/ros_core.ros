@@ -1,0 +1,106 @@
+std_msgs:
+  msgs:
+    ColorRGBA
+      message
+        float32 r
+        float32 g
+        float32 b
+        float32 a
+    Float64MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        float64[] data
+    Int64MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        int64[] data
+    Byte
+      message
+        byte data
+    Int32MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        int32[] data
+    Header
+      message
+        'builtin_interfaces/msg/Time'[] stamp
+        string frame_id
+    Int32
+      message
+        int32 data
+    Float32MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        float32[] data
+    Int64
+      message
+        int64 data
+    String
+      message
+        string data
+    Int16MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        int16[] data
+    Int8MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        int8[] data
+    MultiArrayLayout
+      message
+        'std_msgs/msg/MultiArrayDimension'[] dim
+        uint32 data_offset
+    UInt16MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        uint16[] data
+    ByteMultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        byte[] data
+    Float32
+      message
+        float32 data
+    UInt32MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        uint32[] data
+    UInt64MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        uint64[] data
+    MultiArrayDimension
+      message
+        string label
+        uint32 size
+        uint32 stride
+    UInt32
+      message
+        uint32 data
+    Empty
+      message
+    Bool
+      message
+        bool data
+    UInt64
+      message
+        uint64 data
+    Float64
+      message
+        float64 data
+    UInt8
+      message
+        uint8 data
+    Int8
+      message
+        int8 data
+    UInt8MultiArray
+      message
+        'std_msgs/msg/MultiArrayLayout'[] layout
+        uint8[] data
+    Int16
+      message
+        int16 data
+    UInt16
+      message
+        uint16 data

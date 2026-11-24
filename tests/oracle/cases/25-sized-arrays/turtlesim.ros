@@ -1,0 +1,46 @@
+turtlesim:
+    msgs:
+      Pose
+       message
+         float32 x 
+         float32 y 
+         float32 theta 
+         float32 linear_velocity 
+         float32 angular_velocity
+      Color
+        message
+         uint8 r 
+         uint8 g 
+         uint8 b
+    srvs:
+      TeleportAbsolute
+       request
+         float32 x 
+         float32 y 
+         float32 theta
+       response
+      SetPen
+       request
+         uint8 r 
+         uint8 g 
+         uint8 b 
+         uint8 width 
+         uint8 off
+       response
+      TeleportRelative
+       request
+         float32 linear 
+         float32 angular
+       response
+      Spawn
+       request
+         float32 x 
+         float32 y 
+         float32 theta 
+         string name # Optional. A unique name will be created and returned if this is empty
+       response
+         string name
+      Kill
+       request
+         string name
+       response

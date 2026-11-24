@@ -1,0 +1,10 @@
+builtin_interfaces:
+  msgs:
+    Time
+      message
+        int32 sec
+        uint32 nanosec
+    Duration
+      message
+        int32 sec
+        uint32 nanosec

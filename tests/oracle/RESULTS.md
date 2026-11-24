@@ -35,7 +35,8 @@ had been built locally by then (`build/rossystem-ls/`), so cases 07-09 are the *
 | 09 | same, but arrow `node::iface` | rejected | **REJECTED** 2E | ✅ |
 | 10 | our regenerated `turtlesim.ros` **with message fields** | accepted | **ACCEPTED** 0E/0W | ✅ |
 | 11 | every primitive, array, constant, spec ref, keyword field name, srv, action | accepted | **ACCEPTED** 0E/0W | ✅ |
-| 12 | bounded array `float32[3]` / `string<=10` | rejected | **REJECTED** 5E | ✅ |
+| 12 | bounded array `float32[3]` / `string<=10` | rejected | **REJECTED** 5E (3.1.0 server; see 25: `float32[3]` is valid now, `string<=10` still is not) | ✅ |
+| 25 | fixed and bounded arrays `T[N]`, `T[<=N]` over primitives, `time`, `duration`, `Header`, spec refs; plus `T[]` | accepted | **ACCEPTED** 0E/0W (RosTooling with `SizedArray`, 2026-11-24) | ✅ |
 | `_deps` | the shared dependency specs | accepted | **ACCEPTED** 0E/0W | ✅ |
 
 Thirteen for thirteen across both runs. Cases 01-06 are unchanged and still produce the run-1

@@ -85,6 +85,7 @@ CASES = [
     ("RM073", "probe_msgs.ros", "    Reading\n", "    Reading:\n"),
     ("RM074", "probe_msgs.ros", "float64 value", "float65 value"),
     ("RM075", "probe_msgs.ros", "float64 value", "string<=10 value"),
+    ("RM075-sized-array-accepted", "probe_msgs.ros", "float64 value", "float64[3] value"),   # valid since SizedArray
     ("RM076", "probe_msgs.ros", "'probe_msgs/msg/Reading' first", "'probe_msgs/Reading' first"),
     ("RM077", "probe_msgs.ros", "        float64 value\n", "        float64 value\n        uint8 MODE = 1\n"),
     ("RM079", "probe_msgs.ros", None, "probe_msgs {\n  msgs {\n    Reading {\n      message {\n        float64 value\n      }\n    }\n  }\n}\n"),
