@@ -1,0 +1,7 @@
+services:
+  talker:
+    image: "myrepo/ros-demo:${TAG:-latest}"
+    command: ros2 run demo_nodes_cpp talker --ros-args -r __node:=talker2
+  tool:
+    image: busybox
+    command: sleep infinity

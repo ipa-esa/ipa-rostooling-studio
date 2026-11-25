@@ -1,0 +1,26 @@
+services:
+  talker:
+    image: ros:jazzy
+    network_mode: host
+    ipc: host
+    environment:
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=7
+    volumes:
+      - ./config:/config:ro
+    command: ros2 run demo_nodes_cpp talker --ros-args -r chatter:=/robot/chatter --remap __ns:=/robot -r __node:=talker_a -p rate:=2.0 --params-file /config/talker.yaml
+  launcher:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros
+      args:
+        ROS_DISTRO: jazzy
+    depends_on:
+      - talker
+    profiles: [sim]
+    env_file:
+      - ./robot.env
+    command:
+      - bash
+      - -c
+      - "source /opt/ros/jazzy/setup.bash && ros2 launch nav_pkg x.launch.py use_sim:=true"

@@ -1,0 +1,277 @@
+{
+  "compose_files": [
+    {
+      "include": [
+        "../referenced/compose.yaml",
+        "extra.yaml"
+      ],
+      "path": "include/compose.yaml",
+      "services": [
+        {
+          "build": null,
+          "command": [
+            "rviz2"
+          ],
+          "depends_on": [
+            "launcher"
+          ],
+          "dockerfile_ref": null,
+          "entrypoint": null,
+          "env_file": [],
+          "environment": {},
+          "image": "ros:jazzy",
+          "ipc": null,
+          "name": "viewer",
+          "network_mode": null,
+          "profiles": [],
+          "ros": null,
+          "unresolved": [
+            "command is not a recognised ros2 run/launch"
+          ],
+          "volumes": []
+        }
+      ]
+    },
+    {
+      "include": [],
+      "path": "referenced/compose.yaml",
+      "services": [
+        {
+          "build": {
+            "args": {
+              "ROS_DISTRO": "jazzy"
+            },
+            "context": ".",
+            "dockerfile": "docker/Dockerfile.ros"
+          },
+          "command": [
+            "bash",
+            "-c",
+            "source /opt/ros/jazzy/setup.bash && ros2 launch nav_pkg x.launch.py use_sim:=true"
+          ],
+          "depends_on": [
+            "talker"
+          ],
+          "dockerfile_ref": "referenced/docker/Dockerfile.ros",
+          "entrypoint": null,
+          "env_file": [
+            "./robot.env"
+          ],
+          "environment": {},
+          "image": null,
+          "ipc": null,
+          "name": "launcher",
+          "network_mode": null,
+          "profiles": [
+            "sim"
+          ],
+          "ros": {
+            "executable": null,
+            "launch_file": "x.launch.py",
+            "package": "nav_pkg",
+            "ros_args": {
+              "namespace": null,
+              "node_name": null,
+              "params": {},
+              "params_files": [],
+              "remaps": []
+            }
+          },
+          "unresolved": [],
+          "volumes": []
+        },
+        {
+          "build": null,
+          "command": [
+            "ros2",
+            "run",
+            "demo_nodes_cpp",
+            "talker",
+            "--ros-args",
+            "-r",
+            "chatter:=/robot/chatter",
+            "--remap",
+            "__ns:=/robot",
+            "-r",
+            "__node:=talker_a",
+            "-p",
+            "rate:=2.0",
+            "--params-file",
+            "/config/talker.yaml"
+          ],
+          "depends_on": [],
+          "dockerfile_ref": null,
+          "entrypoint": null,
+          "env_file": [],
+          "environment": {
+            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+            "ROS_DOMAIN_ID": "7"
+          },
+          "image": "ros:jazzy",
+          "ipc": "host",
+          "name": "talker",
+          "network_mode": "host",
+          "profiles": [],
+          "ros": {
+            "executable": "talker",
+            "launch_file": null,
+            "package": "demo_nodes_cpp",
+            "ros_args": {
+              "namespace": "/robot",
+              "node_name": "talker_a",
+              "params": {
+                "rate": "2.0"
+              },
+              "params_files": [
+                "/config/talker.yaml"
+              ],
+              "remaps": [
+                [
+                  "chatter",
+                  "/robot/chatter"
+                ]
+              ]
+            }
+          },
+          "unresolved": [],
+          "volumes": [
+            "./config:/config:ro"
+          ]
+        }
+      ]
+    },
+    {
+      "include": [],
+      "path": "strings/docker-compose.yml",
+      "services": [
+        {
+          "build": null,
+          "command": [
+            "ros2",
+            "run",
+            "demo_nodes_cpp",
+            "talker",
+            "--ros-args",
+            "-r",
+            "__node:=talker2"
+          ],
+          "depends_on": [],
+          "dockerfile_ref": null,
+          "entrypoint": null,
+          "env_file": [],
+          "environment": {},
+          "image": "myrepo/ros-demo:${TAG:-latest}",
+          "ipc": null,
+          "name": "talker",
+          "network_mode": null,
+          "profiles": [],
+          "ros": {
+            "executable": "talker",
+            "launch_file": null,
+            "package": "demo_nodes_cpp",
+            "ros_args": {
+              "namespace": null,
+              "node_name": "talker2",
+              "params": {},
+              "params_files": [],
+              "remaps": []
+            }
+          },
+          "unresolved": [
+            "image uses ${TAG:-latest} (default: latest)"
+          ],
+          "volumes": []
+        },
+        {
+          "build": null,
+          "command": [
+            "sleep",
+            "infinity"
+          ],
+          "depends_on": [],
+          "dockerfile_ref": null,
+          "entrypoint": null,
+          "env_file": [],
+          "environment": {},
+          "image": "busybox",
+          "ipc": null,
+          "name": "tool",
+          "network_mode": null,
+          "profiles": [],
+          "ros": null,
+          "unresolved": [
+            "command is not a recognised ros2 run/launch"
+          ],
+          "volumes": []
+        }
+      ]
+    }
+  ],
+  "dockerfiles": [
+    {
+      "apt": [
+        "git",
+        "python3-colcon-common-extensions",
+        "ros-${ROS_DISTRO}-rviz2",
+        "ros-jazzy-nav2-bringup"
+      ],
+      "args": {
+        "BASE_TAG": "jazzy",
+        "DEBIAN_FRONTEND": "noninteractive",
+        "WS": "/ws"
+      },
+      "cmd": [
+        "/bin/sh",
+        "-c",
+        "ros2 launch nav_pkg x.launch.py"
+      ],
+      "copies": [
+        {
+          "dest": "/opt/app",
+          "from": "base",
+          "src": "/ws/install"
+        },
+        {
+          "dest": "/ws/",
+          "from": null,
+          "src": "config/"
+        },
+        {
+          "dest": "/ws/",
+          "from": null,
+          "src": "launch/"
+        }
+      ],
+      "entrypoint": [
+        "/ros_entrypoint.sh"
+      ],
+      "env": {
+        "GREETING": "hello world",
+        "LANG": "C.UTF-8",
+        "ROS_DISTRO": "jazzy",
+        "TZ": "Europe/Berlin"
+      },
+      "path": "referenced/docker/Dockerfile.ros",
+      "ros_distro": "jazzy",
+      "stages": [
+        {
+          "base_image": "ros:jazzy",
+          "name": "base"
+        },
+        {
+          "base_image": "base",
+          "name": "runtime"
+        }
+      ],
+      "unresolved": [
+        "apt package ros-${ROS_DISTRO}-rviz2 uses ${ROS_DISTRO}"
+      ],
+      "workdir": "/ws"
+    }
+  ],
+  "version": 1,
+  "warnings": [
+    "broken/compose.yaml: cannot parse YAML (line 3): expected ',' or ']', but got ':'",
+    "duplicate service name 'talker' in referenced/compose.yaml, strings/docker-compose.yml"
+  ]
+}

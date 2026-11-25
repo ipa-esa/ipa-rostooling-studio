@@ -1,0 +1,10 @@
+include:
+  - ../referenced/compose.yaml
+  - path: extra.yaml
+services:
+  viewer:
+    image: ros:jazzy
+    command: ["rviz2"]
+    depends_on:
+      launcher:
+        condition: service_started

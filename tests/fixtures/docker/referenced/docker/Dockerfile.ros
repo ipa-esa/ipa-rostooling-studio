@@ -1,0 +1,21 @@
+ARG BASE_TAG=jazzy
+FROM ros:jazzy AS base
+ARG DEBIAN_FRONTEND=noninteractive
+ARG WS=/ws
+ENV ROS_DISTRO=jazzy
+ENV LANG=C.UTF-8 TZ="Europe/Berlin"
+ENV GREETING hello world
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-nav2-bringup \
+    # a comment inside the continuation
+    python3-colcon-common-extensions \
+    git=1:2.43.0-1 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /ws
+
+FROM base AS runtime
+COPY --from=base /ws/install /opt/app
+COPY --chown=1000:1000 config/ launch/ /ws/
+RUN apt install -y ros-${ROS_DISTRO}-rviz2
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ros2 launch nav_pkg x.launch.py
