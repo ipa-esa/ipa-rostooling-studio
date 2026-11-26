@@ -34,22 +34,22 @@ the three standing sources.
 
 ## How to run it
 
-1. Read `references/popular-ros-packages.md` if it already exists, so the refresh can note
-   what's new versus the previous version rather than silently overwriting history.
-2. Fetch every source (the 3 standing ones plus any URLs found in `$ARGUMENTS`) with a web
-   tool, extracting real package/repo names — never invent ones a fetch didn't actually
-   return; if a fetch is degraded or JS-rendered and only returns a shell, say so rather than
-   padding the list from general knowledge.
-3. Cross-reference the fetched content against the existing file content (from step 1, if it
-   existed) so entries can be marked `new this refresh` versus `already known`, and preserve
-   any hand-written notes in the existing file rather than clobbering them.
-4. Write the merged result back to `references/popular-ros-packages.md` in the same format
-   as before (table or grouped list: name, one-line purpose, source(s), category if the
-   awesome-list gives one).
-5. Report back a short summary to the user: total packages, how many are new this run, and
-   whether any source fetch was degraded. Do not silently swallow a "this fetch was
-   degraded" note — that's exactly the kind of thing the user needs to know before trusting
-   the refreshed list.
+1. Run the script from the workspace root. It reads the three standing sources and your extra
+   URLs, extracts the repositories, removes duplicates, and compares them with
+   `references/popular-ros-packages.md`:
+   ```bash
+   python3 scripts/ros_catalog_sources.py $ARGUMENTS
+   ```
+   It prints one status line per source, then only the repositories that are not listed yet. It
+   writes nothing.
+2. Add the new entries to `references/popular-ros-packages.md` in the file's existing format
+   (name, one-line purpose, source(s), category if known), marked `new this refresh`. Leave existing
+   entries and hand-written notes as they are. Never invent a package, and leave the purpose out
+   rather than guessing it.
+3. A source marked `failed` or `degraded` (the script exits 2) was not read properly, for example a
+   JavaScript-rendered page that returns only a shell. Fetch that one with a web tool if you can,
+   and say so in your report either way.
+4. Report the total, the number of new entries, and every degraded source.
 
 ## Non-goals
 

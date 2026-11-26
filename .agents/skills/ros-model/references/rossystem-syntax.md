@@ -82,81 +82,24 @@ When authoring fresh and the natural system name equals a package named in any `
 the order: `fromFile:` → `subSystems:` → `processes:` → `nodes:` → `parameters:` → `connections:`.
 (`fromFile:` alone is grammar-fixed to come first.)
 
-## 2. `fromFile:` — optional in the grammar, mandatory in practice
-
-`fromFileHelper` is a confirmed live bug. Verbatim:
-
-```xtend
-  @Check
-  def fromFileHelper(System system ) {
-      if (!system.fromFile.empty){
-              info('The format for the FromFile attribute is: "NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py"'
-                  ,null,NOT_IN_THE_SYSTEM)
-      }
-      if (!system.fromFile.toString.contains("/")){
-              error('Path not valid, the format for the FromFile attribute is: "NameOfThePackage/Path/to/ExecutableLaunchFile.launch.py"'
-                  ,null,NOT_IN_THE_SYSTEM)
-      }
-  }
-```
-
-Neither dereference is null-guarded, and `SystemImpl.java:70` sets
-`protected static final String FROM_FILE_EDEFAULT = null;`. So omitting `fromFile:` — which 32 of 52
-corpus models do — throws an NPE out of the `@Check`. Writing `fromFile: ""` skips the NPE but hits
-the unconditional ERROR on the second branch.
-
-**Exactly one input traverses this method cleanly**: a non-empty quoted string containing `/`.
+## 2. `fromFile:` — only for a launch file that exists
 
 ```
-fromFile: "my_pkg/launch/bringup.launch.py"
+('fromFile:' fromFile=EString)?
 ```
 
-Always emit it. The `/` and `.` force the quoting anyway.
+Optional. With it, the system is started by an existing launch file; without it, the generator writes
+the bringup package and launch file. The validator accepts both and only requires a `/` in a
+non-empty value (`"<package>/<path>"`).
 
-### What to write when you do not know the launch file
-
-This field is the one place the skill forces you to produce data you may not have — 32 of 52 corpus
-models omit `fromFile:` entirely, so the common case is that no launch file is known. That collides
-head-on with the anti-invention rule elsewhere in this skill (worked-examples.md §1 step 7: *"Omit
-the block entirely rather than guess"*). The conflict is resolved by a **derivation ladder**, not by
-guessing:
-
-1. **The caller named a launch file** → use it verbatim.
-2. **A file matching `<pkg>/launch/<system>.launch.py` exists on disk** → verify with a `Glob`, then
-   use the real path.
-3. **Otherwise** → emit the sentinel
-
-   ```
-   fromFile: "TODO_PACKAGE/launch/TODO.launch.py"
-   ```
-
-   It contains `/`, so it satisfies `fromFileHelper`'s `contains("/")` check and avoids the NPE,
-   while remaining unmistakably a placeholder.
-
-**Never invent a plausible-looking real path.** `"cs4mt_bringup/launch/manufacturing_tb.launch.py"`
-is worse than the sentinel, not better: it is indistinguishable from a verified path, so it silently
-converts a known-unknown into a false fact. Every regeneration run before 2026-07-21 fabricated one
-of these. **Rung 2 means the launch file itself, found with `Glob` — not a `fromFile:` line seen in
-another model** (a corpus file, a vendored catalogue file, or this plugin's own past output under
-`tests/regenerated/`). A path in one of those is that file's author's claim, not something you
-verified; copying it is rung 3 wearing rung 2's clothes.
-
-Say which rung on the `fromFile:` line itself, with a trailing comment (SKILL.md rule 5):
+Use the caller's value, or a launch file confirmed on disk, and say which on the line:
 
 ```
 fromFile: "ur_bringup/launch/ur5e.launch.py"   # caller-supplied
 fromFile: "ur_bringup/launch/ur5e.launch.py"   # on disk: /abs/path/ur_bringup/launch/ur5e.launch.py
-fromFile: "TODO_PACKAGE/launch/TODO.launch.py"
 ```
 
-The sentinel needs no comment (`RM066` already marks it); `rosmodel_lint.py`'s `RM096` (WARNING)
-flags any other `fromFile:` with no provenance comment.
-
-Whichever rung you land on, if it is not rung 1 or 2, **report it to the caller** as
-*fromFile: SYNTHESISED — not extracted from the source, supplied only to avoid the fromFileHelper
-NPE* — and if you saw a candidate path somewhere that you correctly rejected as not being rung 1 or
-2 evidence, say where. `rosmodel_lint.py` emits `RM066` (INFO) on any `fromFile:` containing `TODO`,
-so the placeholder stays visible rather than settling in as if it were real.
+Otherwise leave it out. `rosmodel_lint.py` reports `RM066` on a `TODO` placeholder.
 
 ## 3. `RosNode`
 
@@ -211,8 +154,8 @@ class RosQNP extends DefaultDeclarativeQualifiedNameProvider{
 `obj.eContainer` is the `Artifact`; `obj.eContainer.eContainer` is the `Package`. **The artifact
 level is skipped entirely.** A `Node`'s qualified name is exactly two segments, package then node.
 This is also why the stock three-segment `package.artifact.node` derivation never applies —
-`RosQNP` overrides it. (`RosSystemScopeProvider.xtend` being an empty class body is irrelevant: the
-*scope provider* is stock, the *name provider* is not.)
+`RosQNP` overrides it. (This is the *name provider*; the scope provider only adds rules for
+connection endpoints, extension references and plugin slots.)
 
 ### The trap: `from:` and the arrow targets use DIFFERENT schemes
 
@@ -515,9 +458,7 @@ RosTopicConnection returns RosTopicConnection:
 **Emit only `RosSystemConnection`** — `- [label_a , label_b]` or `- [label_a ; label_b]` referencing local interface labels
 (or qualified labels `<node>.<interface>` when multiple nodes declare identical interface names).
 
-Three separate validator methods (`checkIfInterfaceInSystem`, `checkPortPatterns`, `MatchPortMsgs`)
-each open with an unconditional `connection as RosSystemConnectionImpl`. Any `RosConnection` variant
-throws `ClassCastException` in all three. The grammar's own comment concedes the branch is unused.
+The grammar's own comment says the `RosConnection` branch is unused.
 
 ### Scoping and Endpoint Disambiguation
 
@@ -626,9 +567,7 @@ to the 2-space ladder, and flag the output as reconstructed rather than copied.
 **Quote the subsystem reference with double quotes**, consistent with §8. Bare is legal —
 `SubSystem: system=[System|EString]` admits a plain `ID` — but the corpus examples that leave it
 bare are defective in other respects and are not a style to follow.
-`checkIfInterfaceInSystem` recurses exactly **one** level and casts each subcomponent unconditionally
-to `RosNode`, so a subsystem containing another subsystem throws `ClassCastException`, and interfaces
-two levels down are silently missing from the membership set. **Keep nesting flat.**
+Subsystems may be nested: interfaces declared two or more levels down are still connectable.
 
 ## 8. Quoting summary
 
@@ -669,7 +608,7 @@ manufacturing_tb:
           value: true
 ```
 
-Deviations to **not** copy: this file has no `fromFile:` (trips the NPE of §2), no `connections:`
+Deviations to **not** copy: this file has no `connections:`
 block at all, and leaves the first node label bare while quoting the other 31.
 
 Note `"kmriiwa/arm/joint_states"` — the interface label is the full topic path, and it appears
@@ -697,7 +636,7 @@ declared `-publisher: pub->`, `subscriber` is the `sub->` label, and `from` is t
 direction.
 
 Everything else is defective and must be normalised: 3-space indents, no space after `-`, bare
-labels, no `fromFile:`, no final newline. See `worked-examples.md` §3 for the corrected emission.
+labels, no final newline. See `worked-examples.md` §3 for the corrected emission.
 
 ### Negative example — `material\code\ros-model-examples\turtlesim\turtlesim_system.rossystem`
 

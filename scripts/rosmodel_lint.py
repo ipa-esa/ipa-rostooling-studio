@@ -443,6 +443,16 @@ def _load_base_node_payload():
     return _base_node_payload_cache["nodes"], _base_node_payload_cache["systems"]
 
 
+def catalogue_model_path(rel):
+    """Where the catalogue file `rel` (a node_index.json "file") is: the shared catalogue repos
+    first, then the vendored snapshot in assets/rosmodelscatalog/. None when neither has it."""
+    for root in list(resolve_shared_node_roots()) + [os.path.join(_ASSETS_DIR, "rosmodelscatalog")]:
+        cand = os.path.join(root, rel or "")
+        if rel and os.path.isfile(cand):
+            return os.path.normpath(cand)
+    return None
+
+
 def load_type_index():
     token, overlay = _load_shared_catalogue_overlay()
     if _type_index_cache["token"] != token:
@@ -2426,17 +2436,9 @@ class Linter(object):
             if not entry.get("local"):
                 self.needed_node_files.add(entry["file"])
 
-            if entry["hasOwnSubsystems"]:
-                self.warn(line, "RM091",
-                          "subSystems: '%s' itself declares a subSystems: block." % ref,
-                          "checkIfInterfaceInSystem casts every subsystem component "
-                          "unconditionally to RosNode one level down (validator-rules.md "
-                          "sec 3.5) -- referencing a system that is itself built from "
-                          "subSystems: is two levels of nesting and throws "
-                          "ClassCastException in the real validator. Keep nesting flat.")
-                continue
-
-            if not any(info["interfaces"] for info in entry["nodes"].values()):
+            # a system built from further subsystems exposes theirs, which this entry does not list
+            if not entry["hasOwnSubsystems"] and not any(
+                    info["interfaces"] for info in entry["nodes"].values()):
                 self.warn(line, "RM091",
                           "subSystems: '%s' resolves (%s) but declares zero 'interfaces:' on "
                           "any of its %d node(s)." % (ref, entry["file"], len(entry["nodes"])),
@@ -2515,18 +2517,16 @@ class Linter(object):
         if "TODO" in raw:
             self.info(line, "RM066",
                       "'fromFile:' is the synthesised placeholder '%s'." % raw,
-                      "fromFile: is mandatory in practice only to avoid the fromFileHelper NPE, "
-                      "and 32/52 corpus models supply no launch file at all. The TODO sentinel is "
-                      "the correct value when none is known (rossystem-syntax.md sec 2) -- it is "
-                      "reported so the placeholder stays visible and is not mistaken for a "
-                      "verified path. Replace it with the real launch file before use.")
+                      "It names no real launch file. Replace it with the real "
+                      "'<package>/<path>', or remove fromFile: if no launch file exists "
+                      "(rossystem-syntax.md sec 2).")
         elif not os.path.abspath(self.path).startswith(os.path.abspath(_ASSETS_DIR) + os.sep):
             src_line = self.lines[line - 1] if 1 <= line <= len(self.lines) else ""
             if "# caller-supplied" not in src_line and "# on disk:" not in src_line:
                 self.warn(line, "RM096",
                           "'fromFile:' is a specific path with no provenance comment.",
-                          "Say '# caller-supplied' or '# on disk: <path>' on this line, or use "
-                          "the TODO sentinel (SKILL.md rule 5). A confident-looking path with no "
+                          "Say '# caller-supplied' or '# on disk: <path>' on this line, or leave "
+                          "fromFile: out (SKILL.md rule 5). A confident-looking path with no "
                           "stated provenance is indistinguishable from a verified one -- that is "
                           "exactly what rule 5 warns fabrication is dangerous for.")
 

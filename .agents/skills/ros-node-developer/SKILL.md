@@ -40,7 +40,7 @@ Your role as an agent is to implement **only the domain/business logic** in the 
 
 ### Step 1: Review the Model Contract (`.ros2`)
 
-Inspect the `.ros2` model file (following [`ros-modeler`](../ros-modeler/SKILL.md) and [`ros-model`](../ros-model/SKILL.md)).
+Read the node's part of the `.ros2` model (following [`ros-modeler`](../ros-modeler/SKILL.md) and [`ros-model`](../ros-model/SKILL.md)).
 If any interface, parameter, or QoS policy needs to be added or adjusted before generating wrappers, update the `.ros2` model through `rostooling-mcp` (`ros2_add_artifact`, `ros2_add_interface`, `ros2_add_parameter`, `ros2_set_qos`, `ros2_set_property`) and verify with `validate_ros_model` — do not edit `.ros2` DSL text manually.
 Identify:
 * The package name (`CatkinPackage` / package key)
@@ -79,6 +79,10 @@ Call the RosTooling MCP tool `generate_ros2_wrappers` (or run via the CLI):
 }
 ```
 
+Use `list_ros2_distros` to choose `ros_distro`. If the model carries `@<block>:` extension blocks
+(see `ros_list_plugins`), call `generate_plugin_outputs` instead, so the plugin generators run too;
+a behaviour-tree leaf is authored with the `bt_*` tools.
+
 This generates into `src-gen/<pkg>/`:
 * The communication wrapper (`*NodeWrapper.*` for nodes, or `*RosWrapper` in `<plugin>_plugin_wrapper.hpp` + `plugins.xml` + `PLUGINLIB_EXPORT_CLASS` for `pluginlib` plugins)
 * The build files (`CMakeLists.txt`, `package.xml`, `setup.py`)
@@ -86,17 +90,10 @@ This generates into `src-gen/<pkg>/`:
 
 ### Step 3: Implement Pure Business Logic
 
-Open **only** the logic skeleton file. All method names follow strict naming conventions directly derived from the `.ros2` model:
-
-#### Interface Method Signatures
-
-| Contract in `.ros2` | Inbound Hook to Implement (Override) | Outbound Helper to Call |
-| :--- | :--- | :--- |
-| `publishers: <name>:` | — | `self.publish_<name>(msg)` / `publish_<name>(msg)` |
-| `subscribers: <name>:` | `def on_<name>_received(self, msg):` / `void on_<name>_received(const Msg & msg)` | — |
-| `serviceservers: <name>:` | `def handle_<name>(self, request, response):` / `void handle_<name>(const Req &, Resp &)` | — |
-| `serviceclients: <name>:` | — | `self.call_<name>(request)` / `call_<name>(request)` |
-| `actionservers: <name>:` | `def handle_<name>_goal(self, goal):` / `def execute_<name>(self, goal_handle):` | `self.publish_<name>_feedback(feedback)` |
+Open **only** the logic skeleton file. It already declares every hook to implement and every
+outbound helper, with names and types generated from the model, so take the signatures from it
+rather than deriving them. (Pattern, for orientation: `on_<name>_received`, `handle_<name>`,
+`publish_<name>`, `call_<name>`, `execute_<name>`.)
 
 #### Injected Platform Services (Zero ROS 2 Dependencies)
 

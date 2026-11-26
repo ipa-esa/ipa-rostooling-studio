@@ -57,38 +57,33 @@ These cause hard errors or silent semantic corruption. Never violate them.
    read from the target model's contents, never from the `.ros2` filename (these differ in 76 of
    253 corpus files). In the same file, arrow and parameter targets are
    `<artifactName>::<name>` — the **artifact**. Two opposite levels; do not unify them.
-10. Always emit `fromFile:` in a `.rossystem`, quoted and containing at least one `/`. This is
-    bug avoidance, not a real rule: `fromFileHelper` dereferences `fromFile` without a null
-    guard, so omitting it throws inside the validator.
+10. Emit `fromFile:` only for a launch file the caller named or you found on disk, quoted and
+    containing a `/`. Without it the system is a generating system, which is valid. Never invent one.
 11. Every `type:`/`from:` reference that resolves against the vendored catalogues
     (`assets/type_index.json` / `assets/node_index.json`) gets a trailing comment naming the
     exact file it resolved to (`# assets/rosmodelscatalog/navigation/amcl.ros2`); every
-    project-local one gets a comment saying so and pointing at its companion `.ros`/`.ros2`.
-    Never leave a reader to guess which lines are real catalogue nodes and which are files this
-    session wrote. `rosmodel_lint.py`'s RM088/RM089 check this mechanically.
+    project-local one gets a comment saying so and pointing at its companion `.ros`/`.ros2`. Run
+    `scripts/add_provenance.py <model> --workspace <dir>` to write these; do not type them.
+    `rosmodel_lint.py`'s RM088/RM089 check them.
 12. `from:` reuses one node's implementation; `subSystems:` reuses a whole pre-built
     `.rossystem` composition — do not fake the latter by re-declaring, one by one, nodes that
     a catalogued system already composes. But check first: a subsystem's connectable interfaces
     are exactly what its own `nodes:` block declares under `interfaces:`, never derived from the
-    `.ros2` its `from:` points at. `assets/node_index.json`'s `_systems` entries record this per
+    `.ros2` its `from:` points at. `scripts/catalogue_query.py system <name>` shows this per
     node — a system where every node's `"interfaces"` is empty (e.g. the vendored
     `turtlebot3_navigation2.rossystem`) exposes nothing through `subSystems:`, and its nodes stay
     explicit `nodes:` declarations, with a comment saying why. Never let one node be reachable
     both directly under `nodes:` and through a `subSystems:` entry in the same file.
-    `rosmodel_lint.py`'s RM090 (ERROR: label collision)/RM091 (unresolved, nested, or
+    `rosmodel_lint.py`'s RM090 (ERROR: label collision)/RM091 (unresolved or
     zero-interface target)/RM092 (same `from:`, different label) check this mechanically.
 
 ## Things to route around
 
-Emit only scalar parameter values (Integer, Boolean, Double, String). List, Array and Struct
-values reach a recursive type-checker that uses instance fields as loop counters and produces
-non-deterministic diagnostics. Avoid `dependencies:`, `namespace:`, `ns:`, `processes:` and
-**nested** subsystems (a `subSystems:` entry that itself resolves to a system which has its own
-`subSystems:` block) — `checkIfInterfaceInSystem` casts unconditionally to `RosNode` one level
-down, so two levels of nesting throws `ClassCastException` in the real validator (RM091 catches
-it). A single, flat `subSystems:` entry is fine and tested — see rule 12. Use only the
-`RosSystemConnection` form `- [from_iface , to_iface]` (or `- [from_iface ; to_iface]`); the `RosConnection` branch throws
-`ClassCastException` in three separate checks. Do not emit comments by default.
+Never use the `RosConnection` form; connect interface labels only, `- [from_iface , to_iface]` (or
+`- [from_iface ; to_iface]`). List parameter values are real lists (`["a", "b"]`), never a quoted
+string. `dependencies:`, `namespace:`, `processes:` and nested subsystems are supported; use them
+when the source or the request calls for them. Do not emit comments beyond provenance and `# FLAG`
+markers.
 
 ## Verification posture
 

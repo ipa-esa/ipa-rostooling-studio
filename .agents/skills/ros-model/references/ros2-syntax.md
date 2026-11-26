@@ -626,8 +626,11 @@ time[2] stamps
   unspaced form.
 - **`time[]`, `duration[]` and `Header[]` still have no unbounded form**; only the sized forms exist.
 - **Bounded strings (`string<=10`) have no form.** Emit `string` and mention the lost bound.
+- **Never widen a sized array to `T[]`.** The size is part of the message type, so keep `T[N]` and
+  `T[<=N]` exactly as the source declares them.
 - Needs a RosTooling build that has `SizedArray` (not in a release yet). An older server rejects
-  these forms with `Invalid token float32[3`; then emit `T[]` and mention the lost size.
+  these forms with `Invalid token float32[3`. Keep the sized form anyway, and tell the user that
+  their RosTooling build is too old for it and has to be updated.
 
 #### Referencing a type from another package — always fully qualified
 

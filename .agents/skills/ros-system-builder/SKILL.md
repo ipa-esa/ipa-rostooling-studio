@@ -40,11 +40,15 @@ flowchart TD
 
 ### Stage 1: System Decomposition & Node Discovery
 
-1. **Parse the Target `.rossystem` File**:
-   Inspect the `.rossystem` composition to discover all participating node instances:
-   - Read each `from: <package_name>.<node_name>` reference.
-   - Read all topic, service, and action connections under `connections:`.
-   - Read parameter configurations under `parameters:`.
+1. **Summarise the Target `.rossystem`**:
+   Call the MCP tool `export_system_diagram` instead of reading the file. It returns each node
+   instance with its `from`, interfaces, types and parameters, plus the connections, processes and
+   validation errors:
+   ```json
+   { "system_path": "path/to/my_robot.rossystem", "output_path": "path/to/my_robot.svg" }
+   ```
+   It lists only the nodes declared in that file, so call it again for each `.rossystem` named
+   under `subSystems:`. Then call `ros_list_plugins` to learn which generator plugins are active.
 2. **Classify Nodes into Two Tiers**:
    - **Tier 1 (Off-the-shelf / Catalog Nodes)**:
      Pre-existing nodes from ROS distributions or third-party packages (e.g. `turtlesim`, `nav2_amcl`, `robot_state_publisher`).
@@ -94,7 +98,10 @@ After launching the subagents, end your turn or proceed with other independent p
 Once all subagents have reported successful implementation of their nodes:
 
 1. **Invoke the System Generator**:
-   Call the RosTooling MCP tool `generate_rossystem_code` (or run via CLI):
+   Pick the distro with `list_ros2_distros` and pass it as `ros_distro` where a tool accepts it.
+   If the system or its packages carry `@<block>:` extension blocks and `ros_list_plugins` shows
+   their plugins, call `generate_plugin_outputs` (core generation plus the plugin generators).
+   Otherwise call `generate_rossystem_code`:
    ```json
    {
      "model_path": "path/to/my_robot.rossystem",
@@ -113,10 +120,12 @@ Once all subagents have reported successful implementation of their nodes:
 ### Stage 4: Integration Build & Visualization
 
 1. **Full Workspace Build**:
-   Compile the entire workspace to ensure all interconnected packages compile and link against shared interfaces:
-   ```bash
-   colcon build --symlink-install
+   Call the MCP tool `build_ros2_package` without a package name filter to compile the whole
+   workspace, so interconnected packages compile and link against shared interfaces:
+   ```json
+   { "workspace_dir": "path/to/workspace", "symlink_install": true }
    ```
+   Run `colcon build --symlink-install` directly only when no MCP server is connected.
 2. **System Graph Visualization (Optional)**:
    Export an auto-laid-out GLSP/ELK SVG directly from the Ecore model via MCP `export_system_diagram`, or generate an interactive standalone HTML architecture diagram using the [`ros-plot`](../ros-plot/SKILL.md) skill:
    ```bash
@@ -140,5 +149,5 @@ Once all subagents have reported successful implementation of their nodes:
 - [ ] All participating models validate cleanly with the Xtext server via MCP `validate_ros_model` (`"isValid": true`, `errorCount === 0`).
 - [ ] The `.rossystem` model uses consistent names matching the declared nodes and artifacts.
 - [ ] Subagents are instructed to use `ros-node-developer` and never edit wrapper files.
-- [ ] `generate_rossystem_code` is invoked *after* all node subagents complete.
+- [ ] `generate_plugin_outputs` (or `generate_rossystem_code` with no plugins) is invoked *after* all node subagents complete.
 - [ ] Full integration build (`colcon build` / `build_ros2_package`) runs with zero compiler errors.

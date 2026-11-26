@@ -182,11 +182,8 @@ interaction with the `BEGIN`/`END` lexer is unverified), and the array elements 
 **Reasoning.**
 
 1. *Which file?* Composition + wiring → `.rossystem`.
-2. *`fromFile:` is mandatory in practice.* The grammar marks it optional, but `fromFileHelper`
-   dereferences `system.fromFile` twice with no null guard and the field defaults to `null`, so
-   omitting it throws an NPE out of the `@Check`. `fromFile: ""` skips the NPE but hits the
-   unconditional `contains("/")` ERROR. Emit a quoted path containing `/`. The corpus original omits
-   it — do not copy that.
+2. *`fromFile:`.* The caller named a launch file, so use it verbatim: quoted, with a `/`. Had none
+   been named or found on disk, the field would be left out.
 3. *`from:` references.* `"<packageName>.<nodeName>"` — the **node**, not the artifact — both read
    from the **model contents** of the `.ros2` files, never from their filenames. Here:
    `"examples_rclcpp_minimal_publisher.publisher_lambda"`, where `publisher_lambda` is the `node:`
@@ -205,8 +202,7 @@ interaction with the `BEGIN`/`END` lexer is unverified), and the array elements 
    `type: 'std_msgs/msg/String'` byte-identically, so both endpoints resolve to the same `TopicSpec`
    instance. Matching *strings* is what makes matching *objects* happen.
 9. *Connection form.* `RosSystemConnection` only — `- [label , label]` over local interface labels.
-   The `RosTopicConnection` alternative (referencing `ros::Publisher` directly) throws
-   `ClassCastException` in three separate validator methods.
+   The `RosTopicConnection` alternative (referencing `ros::Publisher` directly) is unused.
 10. *Block order.* `fromFile:` → `nodes:` → `connections:`. No `subSystems:`, no `processes:`
     (1 malformed corpus file — avoid), no system-level `parameters:`.
 
@@ -236,7 +232,7 @@ Semantically equivalent; every difference is a deliberate normalisation:
 | 3-space indents | 2-space | profile rule 2 |
 | `-publisher:` (no space after `-`) | `- "publisher":` | readability; whitespace is hidden either way |
 | bare labels | quoted | profile rule 12 |
-| no `fromFile:` | present, quoted, with `/` | avoids the `fromFileHelper` NPE |
+| no `fromFile:` | the caller's launch file | the request named one |
 | name `system:` | `pub_sub_system:` | **authoring a new model here** — see the caution below |
 | no final newline | one trailing LF | profile rule 4 |
 
@@ -302,8 +298,7 @@ Each line below is a real defect the emitter must not produce. Severity per the 
 | `deadline: "1000000"` | omit the field | parse error — no token in the pinned JAR |
 | `deadline: "5000000000"` (if unpinned) | ≤ `"2147483647"` | **ERROR** — exceeds 32-bit `Integer.parseInt` |
 | `- [sub_label , pub_label]` | `- [pub_label , sub_label]` | **ERROR** — `from` must be the publisher |
-| `fromFile:` omitted | `fromFile: "pkg/launch/x.launch.py"` | NPE escaping the `@Check` |
-| `fromFile: ""` | same as above | **ERROR** — `"".contains("/")` is false |
+| `fromFile: ""` | leave the field out | empty placeholder |
 | `artifacts:` before `fromGitRepo:` | `fromGitRepo:` first | parse error — fixed sequence |
 | `value:` before `type:` | `type:` first | parse error — fixed sequence |
 | a literal tab | 2 spaces | corrupts `BEGIN`/`END` synthesis |
@@ -311,7 +306,7 @@ Each line below is a real defect the emitter must not produce. Severity per the 
 | inlined URDF/XML | `type: String` + quoted path, or `""` | not expressible in the grammar |
 | rewriting `default: 2.0` → `value: 2.0` | keep `default: 2.0` | **silent semantic change** — different metamodel slots; `default:` is legal on every scalar type (Basics.xtext:72-110) |
 | dropping `.ros` message fields | emit `float32 x` etc. | information loss — `MessagePart` is expressible (ros2-syntax.md §11) |
-| inventing `fromFile: "pkg/launch/real_looking.launch.py"` | `"TODO_PACKAGE/launch/TODO.launch.py"` | a fabricated path is indistinguishable from a verified one |
+| inventing `fromFile: "pkg/launch/real_looking.launch.py"` | leave `fromFile:` out | a fabricated path is indistinguishable from a verified one |
 | synthesising `connections:` the source did not declare | emit none, list candidates | `MatchPortMsgs` needs object identity — unverifiable in one file |
 | sorting a `.rossystem` `nodes:` block | preserve source order | may encode bring-up sequence |
 | silently deleting a container-valued `.rossystem` parameter | transcribe it, warn | loses model content |

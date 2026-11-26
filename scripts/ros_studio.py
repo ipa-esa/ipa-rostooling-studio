@@ -914,11 +914,11 @@ def resolve_subsystem(ref, base_dir):
         # walk it here means generate never re-emits a reference we could not read.
         #
         # The index answers what the reference EXPOSES, which is all emission needs. The graph
-        # for the views has to come from the vendored file itself, because the index carries no
+        # for the views has to come from the catalogue file itself (shared repos first), because the index carries no
         # connections -- a missing or unreadable file just means no drill-in, never a failure.
         graph = None
-        cat_path = os.path.join(ASSETS, "rosmodelscatalog", entry.get("file") or "")
-        if entry.get("file") and os.path.isfile(cat_path):
+        cat_path = L.catalogue_model_path(entry.get("file"))
+        if cat_path:
             try:
                 graph = _subsystem_graph(ros_plot.extract_model(cat_path, use_catalogue=False))
             except Exception:
@@ -2387,13 +2387,7 @@ def _catalogue_artifact_types(cat_file, artifact, cache):
     file is missing or won't compose (the caller then treats the type as unknown)."""
     if cat_file not in cache:
         by_art = {}
-        path = None
-        if cat_file:
-            for root_dir in list(L.resolve_shared_node_roots()) + [os.path.join(ASSETS, "rosmodelscatalog")]:
-                cand = os.path.join(root_dir, cat_file)
-                if os.path.isfile(cand):
-                    path = cand
-                    break
+        path = L.catalogue_model_path(cat_file) if cat_file else None
         if path:
             idx, _ = parse_ros2(path)
             for (_pkg, _k), rec in idx.items():

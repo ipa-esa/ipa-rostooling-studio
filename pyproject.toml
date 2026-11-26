@@ -21,6 +21,9 @@ ros-plot = "scripts.ros_plot:main"
 extract-ros2-interfaces = "scripts.extract_ros2_interfaces:main"
 extract-rossystem = "scripts.extract_rossystem:main"
 coresense-studio = "scripts.studio_server:main"
+catalogue-query = "scripts.catalogue_query:main"
+add-provenance = "scripts.add_provenance:main"
+ros-catalog-sources = "scripts.ros_catalog_sources:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["scripts"]

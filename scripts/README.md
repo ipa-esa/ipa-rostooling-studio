@@ -316,7 +316,7 @@ in `--hook` mode) for a workspace whose references are heavily project-local. Se
 | `RM088` | WARNING | `from:` reference resolves against `node_index.json`, but its source line doesn't name the resolved file | `.rossystem` |
 | `RM089` | WARNING | `type:` reference resolves against `type_index.json`, but its source line doesn't name the resolved file | `.ros`, `.ros2` |
 | `RM090` | ERROR | A node label is declared directly under `nodes:` **and** is also reachable through a `subSystems:` entry | `.rossystem` |
-| `RM091` | WARNING | A `subSystems:` entry doesn't resolve, itself declares another `subSystems:` (nesting risk), or resolves but exposes zero `interfaces:` on any node | `.rossystem` |
+| `RM091` | WARNING | A `subSystems:` entry doesn't resolve, or resolves but exposes zero `interfaces:` on any node | `.rossystem` |
 | `RM092` | WARNING | A local node and a node reachable via `subSystems:` resolve the same `from:` under different labels — likely the same real node modelled twice | `.rossystem` |
 
 `RM081`/`RM084` are WARNING, not ERROR, because the linter sees one file at a time: a genuinely
@@ -350,7 +350,7 @@ provides is exactly the "duplicate model definitions confusing the validator" th
 `interfaces:` (never derived from the target `.ros2` — `checkIfInterfaceInSystem` doesn't either),
 so `rosmodel_lint.py` can resolve a `subSystems:` reference the same way the real validator does,
 one level deep. RM090 is the hard case: the same node label reachable two ways in one file. RM091
-covers three ways a `subSystems:` entry itself is a problem, the most important of which is real
+covers ways a `subSystems:` entry itself is a problem, the most important of which is real
 and common — the target resolves but declares **zero** `interfaces:` on any node (true of every
 node in the vendored `turtlebot3_navigation2.rossystem`), which makes the reference grammatically
 valid but useless, since nothing in it can ever be a `connections:` endpoint. RM092 is the soft
@@ -506,6 +506,14 @@ LLM to accept one at a time.
 Exit status is non-zero when anything was flagged — a partial model is a result, not a success.
 
 ---
+
+### Lookup and provenance helpers used by the skills
+
+| Script | Does |
+|---|---|
+| `catalogue_query.py type\|node\|show\|system <text>` | Prints the few catalogue entries asked for, so an agent does not read the index files |
+| `add_provenance.py <model>... [--workspace <dir>] [--check]` | Adds the source comment to `from:` / `type:` lines that have none; changes nothing else |
+| `ros_catalog_sources.py [url...]` | Fetches the package lists and prints repositories not yet in `references/popular-ros-packages.md`; writes nothing |
 
 ## Deviations from the specs, and why
 

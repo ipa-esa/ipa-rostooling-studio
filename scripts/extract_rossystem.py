@@ -64,13 +64,12 @@ from collections import OrderedDict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
+import rosmodel_lint as L  # noqa: E402
 from extract_ros2_interfaces import (  # noqa: E402
     find_packages, read_package_xml, wrap_comment, Flag,
 )
 
 PLUGIN_ROOT = os.path.dirname(SCRIPT_DIR)
-NODE_INDEX = os.path.join(PLUGIN_ROOT, "assets", "node_index.json")
-CATALOGUE_ROOT = os.path.join(PLUGIN_ROOT, "assets", "rosmodelscatalog")
 LINTER = os.path.join(SCRIPT_DIR, "rosmodel_lint.py")
 
 # .ros2 block name -> .rossystem arrow prefix
@@ -198,11 +197,8 @@ class ModelIndex(object):
                     parsed = parse_ros2(os.path.join(models_dir, fn))
                     if parsed:
                         self.local[parsed.package] = parsed
-        try:
-            with open(NODE_INDEX, encoding="utf-8") as fh:
-                self.catalogue = json.load(fh).get("nodes", {})
-        except Exception:
-            self.catalogue = {}
+        # the shared catalogue repos and the vendored snapshot, merged as the linter sees them
+        self.catalogue = L.load_node_index() or {}
 
     def resolve_package(self, package, executable=None):
         """-> (Ros2File, source label, note) or (None, None, None).
@@ -228,7 +224,9 @@ class ModelIndex(object):
         if not hits:
             return None, None, None
         key, entry = hits[0]
-        path = os.path.join(CATALOGUE_ROOT, entry["file"])
+        path = L.catalogue_model_path(entry["file"])
+        if path is None:
+            return None, None, None
         if path not in self.cat_files:
             self.cat_files[path] = parse_ros2(path)
         parsed = self.cat_files[path]
