@@ -101,6 +101,8 @@ Once all subagents have reported successful implementation of their nodes:
    Pick the distro with `list_ros2_distros` and pass it as `ros_distro` where a tool accepts it.
    If the system or its packages carry `@<block>:` extension blocks and `ros_list_plugins` shows
    their plugins, call `generate_plugin_outputs` (core generation plus the plugin generators).
+   For a system that runs in containers (`@docker`), follow the [`ros-docker`](../ros-docker/SKILL.md)
+   skill for generating and running it.
    Otherwise call `generate_rossystem_code`:
    ```json
    {

@@ -81,7 +81,9 @@ Call the RosTooling MCP tool `generate_ros2_wrappers` (or run via the CLI):
 
 Use `list_ros2_distros` to choose `ros_distro`. If the model carries `@<block>:` extension blocks
 (see `ros_list_plugins`), call `generate_plugin_outputs` instead, so the plugin generators run too;
-a behaviour-tree leaf follows the [`ros-bt`](../ros-bt/SKILL.md) skill.
+a behaviour-tree leaf follows the [`ros-bt`](../ros-bt/SKILL.md) skill. If the node runs in a
+generated container and your logic needs a system library, record it as image build info
+([`ros-docker`](../ros-docker/SKILL.md) skill).
 
 This generates into `src-gen/<pkg>/`:
 * The communication wrapper (`*NodeWrapper.*` for nodes, or `*RosWrapper` in `<plugin>_plugin_wrapper.hpp` + `plugins.xml` + `PLUGINLIB_EXPORT_CLASS` for `pluginlib` plugins)

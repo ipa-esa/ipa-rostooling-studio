@@ -258,6 +258,9 @@ the typed tool over writing block text, and never edit an `@<block>:` by hand.
   3. Pass each returned suggestion to `docker_set_build`, and handle `unmatched_services` and
      `unmatched_instances` with `docker_set_node` or report them.
 
+  For the whole container workflow (modes, paths, import, running, switching to native), follow
+  the `ros-docker` skill. Do not set `fromFile` on a dockerized system.
+
 Use `generate_plugin_outputs`, not only the core generators, when a model carries extension blocks.
 
 The workflow, after the inventory of the previous section:
