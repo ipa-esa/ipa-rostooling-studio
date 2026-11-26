@@ -248,7 +248,8 @@ documentation. Plugin tools appear as `<plugin id>__<tool>` only when that plugi
 the typed tool over writing block text, and never edit an `@<block>:` by hand.
 
 - **Behaviour trees** (`@bt`): `set_bt`, `bt_add_node`, `bt_add_port`, `bt_set_wraps`,
-  `bt_validate_tree`.
+  `bt_validate_tree`. For the whole behaviour tree workflow (leaves, logic, tree XML,
+  running it), follow the `ros-bt` skill.
 - **Docker** (`@docker`): `docker_set_node`, `docker_set_system`, `docker_set_build`,
   `docker_import`. For a project that already has Dockerfiles or compose files, do not read them
   yourself:

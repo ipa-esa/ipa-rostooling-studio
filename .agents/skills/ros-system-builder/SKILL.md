@@ -63,7 +63,7 @@ flowchart TD
 
 ### Stage 2: Parallel Subagent Delegation
 
-For every custom node or custom `pluginlib` plugin that needs implementation, launch an autonomous subagent using `invoke_subagent`. (A plugin whose base uses another loader, such as a BT leaf implementing `behaviortree_cpp.TreeNode` on the `bt` loader, gets no class skeleton from core: the language plugin that registers that loader generates its code. Implement only the logic file that plugin writes once, if any, such as a BT leaf's `<Leaf>Logic.hpp`.)
+For every custom node or custom `pluginlib` plugin that needs implementation, launch an autonomous subagent using `invoke_subagent`. (A plugin whose base uses another loader, such as a BT leaf implementing `behaviortree_cpp.TreeNode` on the `bt` loader, gets no class skeleton from core: the language plugin that registers that loader generates its code. Implement only the logic file that plugin writes once, if any, such as a BT leaf's `<Leaf>Logic.hpp`; for behaviour trees follow the [`ros-bt`](../ros-bt/SKILL.md) skill.)
 
 > [!IMPORTANT]
 > Do NOT implement the nodes yourself in the main thread. Delegate each custom node to a dedicated subagent so compiler outputs and intermediate iterations stay in isolated contexts.
